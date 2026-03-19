@@ -23,8 +23,8 @@ EMPLOYEES = [
 # Initialize Session State (Our In-Memory Database)
 if 'tasks' not in st.session_state:
     st.session_state.tasks = [
-        {"id": 1, "title": "Clean VC's Office", "employeeId": "emp2", "hours": 3.0, "rate": 500.0, "status": "pending"},
-        {"id": 2, "title": "Nannying for Sarah", "employeeId": "emp1", "hours": 5.0, "rate": 300.0, "status": "completed"}
+        {"id": 1, "title": "Clean VC's Office", "employee_Id": "emp2", "hours": 3.0, "rate": 500.0, "status": "pending"},
+        {"id": 2, "title": "Nannying for Sarah", "employee_Id": "emp1", "hours": 5.0, "rate": 300.0, "status": "completed"}
     ]
 if 'current_user' not in st.session_state:
     st.session_state.current_user = None
