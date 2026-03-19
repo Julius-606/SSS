@@ -1,24 +1,23 @@
 import streamlit as st
 import pandas as pd
-import requests
 import os
 import time
-from datetime import date
+from datetime import datetime
 
 # --- CONFIG & DB SETUP ---
 st.set_page_config(page_title="SSS Portal OS", layout="wide", page_icon="✨")
 
-API_KEY = "" # Drop your Gemini API Key here for the AI Tips!
 TASKS_CSV = "tasks.csv"
 EMPS_CSV = "employees.csv"
+RESET_TRACKER = "last_reset.txt"
 
-# DEFAULT ADMIN CREDENTIALS (Change these if you want!)
+# DEFAULT ADMIN CREDENTIALS
 ADMIN_USER = "admin"
 ADMIN_PASS = "admin123"
 
 # --- THE COLD WALLETS (CSV ENGINES) ---
 
-# 1. Initialize Employees CSV (Now with usernames and passwords)
+# 1. Initialize Employees CSV
 if not os.path.exists(EMPS_CSV):
     df_emps_init = pd.DataFrame([
         {"id": "emp1", "name": "Wanjiku (Nanny Pro)", "username": "wanjiku", "password": "password123"},
@@ -30,6 +29,46 @@ if not os.path.exists(EMPS_CSV):
 if not os.path.exists(TASKS_CSV):
     df_tasks_init = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned"])
     df_tasks_init.to_csv(TASKS_CSV, index=False)
+
+# 3. THE MONTHLY AUTO-ARCHIVE ENGINE
+CURRENT_MONTH = datetime.now().strftime("%Y-%m")
+
+if not os.path.exists(RESET_TRACKER):
+    with open(RESET_TRACKER, "w") as f:
+        f.write(CURRENT_MONTH)
+
+with open(RESET_TRACKER, "r") as f:
+    last_reset = f.read().strip()
+
+# If we entered a new month, trigger the rollover!
+if last_reset != CURRENT_MONTH and os.path.exists(TASKS_CSV):
+    try:
+        temp_tasks_df = pd.read_csv(TASKS_CSV)
+        if not temp_tasks_df.empty:
+            # Keep active gigs
+            active_statuses = ['Pending', 'In Progress', 'Completed']
+            keep_df = temp_tasks_df[temp_tasks_df['status'].isin(active_statuses)]
+            
+            # Archive settled/blown gigs
+            archive_df = temp_tasks_df[~temp_tasks_df['status'].isin(active_statuses)]
+            
+            if not archive_df.empty:
+                archive_filename = f"archive_{last_reset}.csv"
+                if os.path.exists(archive_filename):
+                    existing_archive = pd.read_csv(archive_filename)
+                    combined_archive = pd.concat([existing_archive, archive_df], ignore_index=True)
+                    combined_archive.to_csv(archive_filename, index=False)
+                else:
+                    archive_df.to_csv(archive_filename, index=False)
+            
+            # Overwrite main ledger with ONLY the carry-over active gigs
+            keep_df.to_csv(TASKS_CSV, index=False)
+        
+        # Update the tracker file to the new month
+        with open(RESET_TRACKER, "w") as f:
+            f.write(CURRENT_MONTH)
+    except Exception as e:
+        st.error(f"Archive Engine Failed: {e}")
 
 # Load the liquidity pools
 try:
@@ -66,22 +105,6 @@ def get_employee_name(emp_id):
         return match.iloc[0]['name']
     return "Unknown Hustler 👻"
 
-def ai_tips(task_title):
-    if not API_KEY:
-        return "Bro, you forgot to paste the Gemini API Key in the code! Trust your instincts and avoid the stop-loss! ✨"
-        
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={API_KEY}"
-    payload = {
-        "contents": [{"parts": [{"text": f"Give 3 short, punchy, and highly practical tips on how to excellently execute this specific task: '{task_title}'. Format as a short paragraph."}]}],
-        "systemInstruction": {"parts": [{"text": "You are an expert mentor for student gig workers. Speak encouragingly. Use slight Gen-Z slang."}]}
-    }
-    try:
-        res = requests.post(url, json=payload)
-        data = res.json()
-        return data['candidates'][0]['content']['parts'][0]['text']
-    except Exception as e:
-        return "Failed to load AI tips. Secure the bag manually! ✨"
-
 # --- 1. LOGIN SCREEN (THE FIREWALL) ---
 if st.session_state.current_user is None:
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -97,16 +120,14 @@ if st.session_state.current_user is None:
                 submitted = st.form_submit_button("Enter the Market 🚀", use_container_width=True, type="primary")
                 
                 if submitted:
-                    # 1. Check if it's the Admin Market Maker
                     if login_user == ADMIN_USER and login_pass == ADMIN_PASS:
                         st.session_state.current_user = {"role": "admin", "name": "Admin Boss"}
                         st.rerun()
                     else:
-                        # 2. Check if it's an enrolled Hustler
                         match = emps_df[(emps_df['username'] == login_user) & (emps_df['password'] == login_pass)]
                         if not match.empty:
                             emp = match.iloc[0]
-                            st.session_state.current_user = {"role": "employee", "id": emp['id'], "name": emp['name']}
+                            st.session_state.current_user = {"role": "employee", "id": emp['id'], "name": emp['name'], "is_phased": False}
                             st.rerun()
                         else:
                             st.error("Invalid credentials. Stop-loss hit. 📉 Try again.")
@@ -125,7 +146,6 @@ elif st.session_state.current_user['role'] == 'admin':
         
         if st.form_submit_button("Hire Hustler 🤝"):
             if new_emp_name and new_emp_user and new_emp_pass:
-                # Check if username already exists to prevent spoofing
                 if new_emp_user in emps_df['username'].values:
                     st.error("Username already taken! Pick another one.")
                 else:
@@ -143,6 +163,21 @@ elif st.session_state.current_user['role'] == 'admin':
             else:
                 st.error("Fill out all fields bro.")
                 
+    st.sidebar.write("---")
+    
+    # THE ADMIN PHASE SHIFT
+    st.sidebar.subheader("👁️ Phase Mode")
+    phase_target = st.sidebar.selectbox("Enter Hustler's Dashboard:", emps_df['name'].tolist())
+    if st.sidebar.button("Phase In 👻"):
+        emp_row = emps_df[emps_df['name'] == phase_target].iloc[0]
+        st.session_state.current_user = {
+            "role": "employee", 
+            "id": emp_row['id'], 
+            "name": emp_row['name'],
+            "is_phased": True # Flaggers for the logout button
+        }
+        st.rerun()
+
     st.sidebar.write("---")
     if st.sidebar.button("Log Out 🚪", type="primary"):
         st.session_state.current_user = None
@@ -162,7 +197,8 @@ elif st.session_state.current_user['role'] == 'admin':
                 
                 h_col, r_col = st.columns(2)
                 hours = h_col.number_input("Hours / Person", min_value=0.5, step=0.5, value=1.0)
-                rate = r_col.number_input("Rate / Hr (Ksh)", min_value=50.0, step=10.0, value=300.0)
+                # Removed the min_value limit. It can go down to 0.0 now!
+                rate = r_col.number_input("Rate / Hr (Ksh)", min_value=0.0, step=10.0, value=300.0)
                 
                 submitted = st.form_submit_button("🚀 Dispatch to Squad", type="primary")
                 
@@ -171,7 +207,8 @@ elif st.session_state.current_user['role'] == 'admin':
                         st.error("⚠️ Pick at least one hustler bro, don't leave the gig hanging.")
                     else:
                         new_records = []
-                        today_str = date.today().strftime("%Y-%m-%d")
+                        # Specific down to the second!
+                        exact_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         for name in selected_squad_names:
                             emp_id = emp_options[name]
                             new_records.append({
@@ -181,7 +218,7 @@ elif st.session_state.current_user['role'] == 'admin':
                                 "hours": hours,
                                 "rate": rate,
                                 "status": "Pending",
-                                "date_assigned": today_str
+                                "date_assigned": exact_time_str
                             })
                         
                         new_df = pd.DataFrame(new_records)
@@ -208,7 +245,7 @@ elif st.session_state.current_user['role'] == 'admin':
                         st.markdown(f"**{task['title']}**")
                         emp_name = get_employee_name(task['employee_Id']).split(' ')[0]
                         date_str = task.get('date_assigned', 'Unknown Date')
-                        st.caption(f"👤 {emp_name} | ⏳ {task['hours']}h | 💵 Ksh {task['rate']}/h | 📅 {date_str}")
+                        st.caption(f"👤 {emp_name} | ⏳ {task['hours']}h | 💵 Ksh {task['rate']}/h | 🕒 {date_str}")
                     with t_col2:
                         st.markdown(f"**Ksh {float(task['hours']) * float(task['rate'])}**")
                         
@@ -223,7 +260,7 @@ elif st.session_state.current_user['role'] == 'admin':
                                 st.rerun()
 
     st.write("---")
-    st.subheader("🗄️ The Master Ledger (All Transactions)")
+    st.subheader("🗄️ The Master Ledger (Current Month)")
     
     if not tasks_df.empty:
         display_df = tasks_df.copy()
@@ -238,14 +275,23 @@ elif st.session_state.current_user['role'] == 'admin':
 elif st.session_state.current_user['role'] == 'employee':
     user_id = str(st.session_state.current_user['id'])
     user_name = st.session_state.current_user['name']
+    is_phased = st.session_state.current_user.get('is_phased', False)
     
     st.sidebar.title("👤 My Profile")
     st.sidebar.write(f"Welcome back to the trenches,\n**{user_name}**.")
     
     st.sidebar.write("---")
-    if st.sidebar.button("Log Out 🚪", type="primary"):
-        st.session_state.current_user = None
-        st.rerun()
+    
+    # Check if the Admin is phasing in!
+    if is_phased:
+        st.sidebar.warning("👁️ ADMIN PHASED IN")
+        if st.sidebar.button("Return to God-Mode ⚡", type="primary"):
+            st.session_state.current_user = {"role": "admin", "name": "Admin Boss"}
+            st.rerun()
+    else:
+        if st.sidebar.button("Log Out 🚪", type="primary"):
+            st.session_state.current_user = None
+            st.rerun()
 
     if not tasks_df.empty:
         tasks_df['employee_Id'] = tasks_df['employee_Id'].astype(str)
@@ -275,12 +321,7 @@ elif st.session_state.current_user['role'] == 'employee':
                 with colA:
                     st.markdown(f"### {task['title']}")
                     date_str = task.get('date_assigned', 'Unknown Date')
-                    st.caption(f"Assigned: {date_str} | Allocated: {task['hours']} hrs @ Ksh {task['rate']}/hr  => **Target TP: Ksh {float(task['hours']) * float(task['rate'])}**")
-                    
-                    if st.button("✨ AI Hack (Pro Tips)", key=f"tip_{task['id']}"):
-                        with st.spinner("Consulting the algorithms..."):
-                            tips = ai_tips(task['title'])
-                            st.info(tips)
+                    st.caption(f"🕒 Assigned: {date_str} | Allocated: {task['hours']} hrs @ Ksh {task['rate']}/hr  => **Target TP: Ksh {float(task['hours']) * float(task['rate'])}**")
 
                 with colB:
                     if task['status'] == 'Pending':
