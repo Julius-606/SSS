@@ -12,33 +12,37 @@ API_KEY = "" # Drop your Gemini API Key here for the AI Tips!
 TASKS_CSV = "tasks.csv"
 EMPS_CSV = "employees.csv"
 
+# DEFAULT ADMIN CREDENTIALS (Change these if you want!)
+ADMIN_USER = "admin"
+ADMIN_PASS = "admin123"
+
 # --- THE COLD WALLETS (CSV ENGINES) ---
 
-# 1. Initialize Employees CSV if it doesn't exist (Seed with 2 mock hustlers)
+# 1. Initialize Employees CSV (Now with usernames and passwords)
 if not os.path.exists(EMPS_CSV):
     df_emps_init = pd.DataFrame([
-        {"id": "emp1", "name": "Wanjiku (Nanny Pro)"},
-        {"id": "emp2", "name": "Ochieng (Deep Cleaner)"}
+        {"id": "emp1", "name": "Wanjiku (Nanny Pro)", "username": "wanjiku", "password": "password123"},
+        {"id": "emp2", "name": "Ochieng (Deep Cleaner)", "username": "ochieng", "password": "password123"}
     ])
     df_emps_init.to_csv(EMPS_CSV, index=False)
 
-# 2. Initialize Tasks CSV if it doesn't exist
+# 2. Initialize Tasks CSV
 if not os.path.exists(TASKS_CSV):
     df_tasks_init = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned"])
     df_tasks_init.to_csv(TASKS_CSV, index=False)
 
-# Load the liquidity pools (DataFrames)
+# Load the liquidity pools
 try:
     emps_df = pd.read_csv(EMPS_CSV)
-    # Ensure ID is treated as string to avoid weird pandas float conversions
-    emps_df['id'] = emps_df['id'].astype(str) 
+    emps_df['id'] = emps_df['id'].astype(str)
+    emps_df['username'] = emps_df['username'].astype(str)
+    emps_df['password'] = emps_df['password'].astype(str)
 except Exception as e:
     st.error(f"Failed to read Employee Ledger. Error: {e}")
-    emps_df = pd.DataFrame(columns=["id", "name"])
+    emps_df = pd.DataFrame(columns=["id", "name", "username", "password"])
 
 try:
     tasks_df = pd.read_csv(TASKS_CSV)
-    # Convert hours/rate to numeric just in case CSV saved them as strings
     tasks_df['hours'] = pd.to_numeric(tasks_df['hours'], errors='coerce')
     tasks_df['rate'] = pd.to_numeric(tasks_df['rate'], errors='coerce')
 except Exception as e:
@@ -46,11 +50,9 @@ except Exception as e:
     tasks_df = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned"])
 
 def save_tasks(df):
-    """Saves the current tasks dataframe straight to the local CSV"""
     df.to_csv(TASKS_CSV, index=False)
 
 def save_emps(df):
-    """Saves the current employees dataframe straight to the local CSV"""
     df.to_csv(EMPS_CSV, index=False)
 
 # Initialize Session State
@@ -59,7 +61,6 @@ if 'current_user' not in st.session_state:
 
 # --- HELPER FUNCTIONS ---
 def get_employee_name(emp_id):
-    # Search our dynamic dataframe for the name
     match = emps_df[emps_df['id'] == str(emp_id)]
     if not match.empty:
         return match.iloc[0]['name']
@@ -81,32 +82,36 @@ def ai_tips(task_title):
     except Exception as e:
         return "Failed to load AI tips. Secure the bag manually! ✨"
 
-# --- LOGIN SCREEN ---
+# --- 1. LOGIN SCREEN (THE FIREWALL) ---
 if st.session_state.current_user is None:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<h1 style='text-align: center;'>✨ SSS Portal</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: gray;'>Swift-hands Student Services. Secure your bag. No cap.</p>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: gray; margin-bottom: 30px;'>Swift-hands Student Services. Authorized Personnel Only.</p>", unsafe_allow_html=True)
         
-        st.write("---")
-        if st.button("🛡️ Login as Admin (The Boss)", use_container_width=True, type="primary"):
-            st.session_state.current_user = {"role": "admin", "name": "Admin Boss"}
-            st.rerun()
-            
-        st.markdown("<p style='text-align: center; font-size: 12px; font-weight: bold; color: gray; margin-top: 15px;'>OR HUSTLE</p>", unsafe_allow_html=True)
-        
-        # Pull names directly from the dynamic CSV
-        emp_names = emps_df['name'].tolist()
-        if not emp_names:
-            st.warning("No employees enrolled yet. Admin needs to hire some hustlers!")
-        else:
-            selected_emp = st.selectbox("Select your profile", emp_names)
-            if st.button("👤 Login as Employee", use_container_width=True):
-                emp_row = emps_df[emps_df['name'] == selected_emp].iloc[0]
-                st.session_state.current_user = {"role": "employee", "id": emp_row['id'], "name": emp_row['name']}
-                st.rerun()
+        with st.container(border=True):
+            st.markdown("### 🔐 Secure Login")
+            with st.form("login_form"):
+                login_user = st.text_input("Username")
+                login_pass = st.text_input("Password", type="password")
+                submitted = st.form_submit_button("Enter the Market 🚀", use_container_width=True, type="primary")
+                
+                if submitted:
+                    # 1. Check if it's the Admin Market Maker
+                    if login_user == ADMIN_USER and login_pass == ADMIN_PASS:
+                        st.session_state.current_user = {"role": "admin", "name": "Admin Boss"}
+                        st.rerun()
+                    else:
+                        # 2. Check if it's an enrolled Hustler
+                        match = emps_df[(emps_df['username'] == login_user) & (emps_df['password'] == login_pass)]
+                        if not match.empty:
+                            emp = match.iloc[0]
+                            st.session_state.current_user = {"role": "employee", "id": emp['id'], "name": emp['name']}
+                            st.rerun()
+                        else:
+                            st.error("Invalid credentials. Stop-loss hit. 📉 Try again.")
 
-# --- ADMIN DASHBOARD ---
+# --- 2. ADMIN DASHBOARD (GOD MODE) ---
 elif st.session_state.current_user['role'] == 'admin':
     st.sidebar.title("🛡️ Admin Command Center")
     st.sidebar.write("Managing the SSS Prop Firm.")
@@ -114,20 +119,32 @@ elif st.session_state.current_user['role'] == 'admin':
     st.sidebar.write("---")
     st.sidebar.subheader("👔 HR Dept (Onboarding)")
     with st.sidebar.form("add_employee_form"):
-        new_emp_name = st.text_input("New Hustler Name", placeholder="e.g. Kamaa (Plumber)")
+        new_emp_name = st.text_input("Full Name", placeholder="e.g. Kamaa (Plumber)")
+        new_emp_user = st.text_input("Username", placeholder="e.g. kamaa99")
+        new_emp_pass = st.text_input("Password", type="password", placeholder="Assign a password")
+        
         if st.form_submit_button("Hire Hustler 🤝"):
-            if new_emp_name:
-                new_id = f"emp{int(time.time())}"
-                new_row = pd.DataFrame([{"id": new_id, "name": new_emp_name}])
-                emps_df = pd.concat([emps_df, new_row], ignore_index=True)
-                save_emps(emps_df)
-                st.success(f"{new_emp_name} added to the liquidity pool!")
-                st.rerun()
+            if new_emp_name and new_emp_user and new_emp_pass:
+                # Check if username already exists to prevent spoofing
+                if new_emp_user in emps_df['username'].values:
+                    st.error("Username already taken! Pick another one.")
+                else:
+                    new_id = f"emp{int(time.time())}"
+                    new_row = pd.DataFrame([{
+                        "id": new_id, 
+                        "name": new_emp_name, 
+                        "username": new_emp_user, 
+                        "password": new_emp_pass
+                    }])
+                    emps_df = pd.concat([emps_df, new_row], ignore_index=True)
+                    save_emps(emps_df)
+                    st.success(f"{new_emp_name} added! They can now log in.")
+                    st.rerun()
             else:
-                st.error("Name cannot be empty bro.")
+                st.error("Fill out all fields bro.")
                 
     st.sidebar.write("---")
-    if st.sidebar.button("Log Out"):
+    if st.sidebar.button("Log Out 🚪", type="primary"):
         st.session_state.current_user = None
         st.rerun()
 
@@ -140,7 +157,6 @@ elif st.session_state.current_user['role'] == 'admin':
             with st.form("dispatch_form"):
                 final_title = st.text_input("Gig Title")
                 
-                # Dynamic Squad Mode
                 emp_options = dict(zip(emps_df['name'], emps_df['id']))
                 selected_squad_names = st.multiselect("👥 Build the Syndicate", list(emp_options.keys()))
                 
@@ -168,15 +184,14 @@ elif st.session_state.current_user['role'] == 'admin':
                                 "date_assigned": today_str
                             })
                         
-                        # Add to DataFrame and save to CSV
                         new_df = pd.DataFrame(new_records)
                         tasks_df = pd.concat([tasks_df, new_df], ignore_index=True)
                         save_tasks(tasks_df)
                         
-                        st.success(f"Dispatched to {len(selected_squad_names)} hustlers! Ledger updated.")
+                        st.success(f"Dispatched to {len(selected_squad_names)} hustlers!")
                         st.rerun()
 
-    # Right Col: Active Gigs (Only showing stuff that needs attention)
+    # Right Col: Active Gigs
     with col2:
         st.subheader("⚡ Active Market (Needs Attention)")
         active_tasks = tasks_df[tasks_df['status'].isin(['Pending', 'In Progress', 'Completed'])]
@@ -208,37 +223,31 @@ elif st.session_state.current_user['role'] == 'admin':
                                 st.rerun()
 
     st.write("---")
-    # Bottom Section: The Master Ledger
     st.subheader("🗄️ The Master Ledger (All Transactions)")
-    st.write("This is the raw, unfiltered block-chain of your operations. Every TP hit and every Stop Loss blown.")
     
     if not tasks_df.empty:
-        # Create a display-friendly version of the dataframe (swap IDs for actual names)
         display_df = tasks_df.copy()
         display_df['Employee Name'] = display_df['employee_Id'].apply(get_employee_name)
         display_df['Total Payout (Ksh)'] = display_df['hours'] * display_df['rate']
-        
-        # Reorder columns to make it look professional
         display_df = display_df[['id', 'date_assigned', 'title', 'Employee Name', 'hours', 'rate', 'Total Payout (Ksh)', 'status']]
-        
-        # Display the interactive dataframe
         st.dataframe(display_df, use_container_width=True, hide_index=True)
     else:
         st.info("Ledger is completely empty.")
 
-# --- EMPLOYEE DASHBOARD ---
+# --- 3. EMPLOYEE DASHBOARD (THE TRENCHES) ---
 elif st.session_state.current_user['role'] == 'employee':
     user_id = str(st.session_state.current_user['id'])
     user_name = st.session_state.current_user['name']
     
     st.sidebar.title("👤 My Profile")
-    st.sidebar.write(f"Welcome to the trenches, **{user_name}**.")
-    if st.sidebar.button("Go Ghost (Logout)"):
+    st.sidebar.write(f"Welcome back to the trenches,\n**{user_name}**.")
+    
+    st.sidebar.write("---")
+    if st.sidebar.button("Log Out 🚪", type="primary"):
         st.session_state.current_user = None
         st.rerun()
 
     if not tasks_df.empty:
-        # Ensure we are comparing strings
         tasks_df['employee_Id'] = tasks_df['employee_Id'].astype(str)
         my_tasks = tasks_df[tasks_df['employee_Id'] == user_id]
         total_earned = sum(float(t['hours']) * float(t['rate']) for _, t in my_tasks.iterrows() if t['status'] == 'Paid')
@@ -256,7 +265,7 @@ elif st.session_state.current_user['role'] == 'employee':
     st.subheader("💼 My Hitlist")
     
     if my_tasks.empty:
-        st.info("No tasks assigned. You're officially off the clock. Go trade some London Session or touch grass in Dunga Beach. 📉")
+        st.info("No tasks assigned. You're officially off the clock. Go study some clinical meds or chart EUR/USD. 📉")
     else:
         for i, task in my_tasks.iloc[::-1].iterrows():
             if pd.isna(task.get('title')): continue
