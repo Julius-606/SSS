@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import json
 import time
+from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIG & MOCK DB ---
 st.set_page_config(page_title="SSS Portal OS", layout="wide", page_icon="✨")
@@ -20,12 +21,17 @@ EMPLOYEES = [
     {"id": "emp8", "name": "Stacy (Event Usher)"}
 ]
 
-# Initialize Session State (Our In-Memory Database)
-if 'tasks' not in st.session_state:
-    st.session_state.tasks = [
-        {"id": 1, "title": "Clean VC's Office", "employee_Id": "emp2", "hours": 3.0, "rate": 500.0, "status": "pending"},
-        {"id": 2, "title": "Nannying for Sarah", "employee_Id": "emp1", "hours": 5.0, "rate": 300.0, "status": "completed"}
-    ]
+# --- GOOGLE SHEETS CONNECTION ---
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    tasks_df = conn.read(worksheet="Tasks", ttl=0) # ttl=0 keeps data fresh, no lagging indicators
+    tasks_df = tasks_df.dropna(how="all") # Drop completely empty rows
+except Exception as e:
+    # Fallback to empty dataframe so the UI doesn't crash while you setup secrets
+    tasks_df = pd.DataFrame(columns=["id", "title", "employeeId", "hours", "rate", "status"])
+    st.error("📉 Database Margin Call! Connect your Google Sheet in Secrets.")
+
+# Initialize Session State
 if 'current_user' not in st.session_state:
     st.session_state.current_user = None
 if 'ai_draft' not in st.session_state:
@@ -129,17 +135,21 @@ elif st.session_state.current_user['role'] == 'admin':
                     if not selected_squad_names:
                         st.error("⚠️ Pick at least one hustler bro, don't leave the gig hanging.")
                     else:
+                        new_rows = []
                         for name in selected_squad_names:
                             emp_id = emp_options[name]
-                            new_task = {
+                            new_rows.append({
                                 "id": int(time.time() * 1000) + hash(emp_id) % 1000,
                                 "title": final_title,
                                 "employeeId": emp_id,
                                 "hours": hours,
                                 "rate": rate,
-                                "status": "pending"
-                            }
-                            st.session_state.tasks.append(new_task)
+                                "status": "Pending"
+                            })
+                        
+                        new_df = pd.DataFrame(new_rows)
+                        updated_df = pd.concat([tasks_df, new_df], ignore_index=True)
+                        conn.update(worksheet="Tasks", data=updated_df)
                         
                         st.success(f"Dispatched to {len(selected_squad_names)} hustlers!")
                         st.rerun()
@@ -147,10 +157,10 @@ elif st.session_state.current_user['role'] == 'admin':
     # Right Col: Task List
     with col2:
         st.subheader("📈 Active & Settled Gigs")
-        if not st.session_state.tasks:
+        if tasks_df.empty:
             st.info("The dashboard is looking as empty as a blown Forex account. Time to dish out some jobs!")
         else:
-            for i, task in enumerate(reversed(st.session_state.tasks)):
+            for i, task in tasks_df.iloc[::-1].iterrows():
                 with st.container(border=True):
                     t_col1, t_col2 = st.columns([3, 1])
                     with t_col1:
@@ -158,18 +168,21 @@ elif st.session_state.current_user['role'] == 'admin':
                         emp_name = get_employee_name(task['employeeId']).split(' ')[0]
                         st.caption(f"👤 {emp_name} | ⏳ {task['hours']}h | 💵 Ksh {task['rate']}/h")
                     with t_col2:
-                        st.markdown(f"**Ksh {task['hours'] * task['rate']}**")
-                        if task['status'] == 'pending':
+                        st.markdown(f"**Ksh {float(task['hours']) * float(task['rate'])}**")
+                        
+                        if task['status'] == 'Pending':
                             st.warning("Cooking ⏳")
-                        elif task['status'] == 'completed':
+                        elif task['status'] == 'In Progress':
+                            st.info("Grinding 🏃")
+                        elif task['status'] == 'Completed':
                             if st.button("Mark Paid 💸", key=f"pay_{task['id']}"):
-                                # Find original task and update
-                                for t in st.session_state.tasks:
-                                    if t['id'] == task['id']:
-                                        t['status'] = 'paid'
+                                tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Paid'
+                                conn.update(worksheet="Tasks", data=tasks_df)
                                 st.rerun()
-                        elif task['status'] == 'paid':
+                        elif task['status'] == 'Paid':
                             st.success("Settled ✅")
+                        elif task['status'] == 'Absconded':
+                            st.error("MIA 🚩")
 
 # --- EMPLOYEE DASHBOARD ---
 elif st.session_state.current_user['role'] == 'employee':
@@ -182,9 +195,11 @@ elif st.session_state.current_user['role'] == 'employee':
         st.session_state.current_user = None
         st.rerun()
 
-    my_tasks = [t for t in st.session_state.tasks if t['employeeId'] == user_id]
-    total_earned = sum(t['hours'] * t['rate'] for t in my_tasks if t['status'] == 'paid')
-    pending_bag = sum(t['hours'] * t['rate'] for t in my_tasks if t['status'] != 'paid')
+    my_tasks = tasks_df[tasks_df['employeeId'] == user_id]
+    
+    # Calculate P/L using float conversion in case Google Sheets sends strings
+    total_earned = sum(float(t['hours']) * float(t['rate']) for _, t in my_tasks.iterrows() if t['status'] == 'Paid')
+    pending_bag = sum(float(t['hours']) * float(t['rate']) for _, t in my_tasks.iterrows() if t['status'] in ['Pending', 'In Progress', 'Completed'])
 
     # Stats Cards
     c1, c2 = st.columns(2)
@@ -194,15 +209,15 @@ elif st.session_state.current_user['role'] == 'employee':
     st.write("---")
     st.subheader("💼 My Hitlist")
     
-    if not my_tasks:
+    if my_tasks.empty:
         st.info("No tasks assigned. You're officially off the clock. Go trade some London Session. 📉")
     else:
-        for task in reversed(my_tasks):
+        for i, task in my_tasks.iloc[::-1].iterrows():
             with st.container(border=True):
                 colA, colB = st.columns([3, 1])
                 with colA:
                     st.markdown(f"### {task['title']}")
-                    st.caption(f"Allocated: {task['hours']} hrs @ Ksh {task['rate']}/hr  => **Target TP: Ksh {task['hours'] * task['rate']}**")
+                    st.caption(f"Allocated: {task['hours']} hrs @ Ksh {task['rate']}/hr  => **Target TP: Ksh {float(task['hours']) * float(task['rate'])}**")
                     
                     if st.button("✨ AI Hack (Pro Tips)", key=f"tip_{task['id']}"):
                         with st.spinner("Consulting the Thika algorithms..."):
@@ -210,13 +225,23 @@ elif st.session_state.current_user['role'] == 'employee':
                             st.info(tips)
 
                 with colB:
-                    if task['status'] == 'pending':
-                        if st.button("Mark Done ✔️", key=f"done_{task['id']}", type="primary"):
-                            for t in st.session_state.tasks:
-                                if t['id'] == task['id']:
-                                    t['status'] = 'completed'
+                    if task['status'] == 'Pending':
+                        if st.button("Start Gig 🏃", key=f"start_{task['id']}", type="secondary"):
+                            tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'In Progress'
+                            conn.update(worksheet="Tasks", data=tasks_df)
                             st.rerun()
-                    elif task['status'] == 'completed':
+                    elif task['status'] == 'In Progress':
+                        if st.button("Mark Done ✔️", key=f"done_{task['id']}", type="primary"):
+                            tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Completed'
+                            conn.update(worksheet="Tasks", data=tasks_df)
+                            st.rerun()
+                        if st.button("Absconded 🏃‍♂️💨", key=f"abscond_{task['id']}"):
+                            tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Absconded'
+                            conn.update(worksheet="Tasks", data=tasks_df)
+                            st.rerun()
+                    elif task['status'] == 'Completed':
                         st.warning("Awaiting Funds ⏳")
-                    elif task['status'] == 'paid':
+                    elif task['status'] == 'Paid':
                         st.success("Paid ✅")
+                    elif task['status'] == 'Absconded':
+                        st.error("Account Blown 🚩")
