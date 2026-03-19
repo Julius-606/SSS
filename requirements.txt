@@ -3,3 +3,8 @@ pandas
 st-gsheets-connection
 google-auth
 watchdog
+
+streamlit
+pandas
+pyairtable
+requests
