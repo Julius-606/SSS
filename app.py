@@ -112,28 +112,16 @@ elif st.session_state.current_user['role'] == 'admin':
     with col1:
         st.subheader("➕ Dispatch a Gig")
         with st.container(border=True):
-            # AI Estimate Section
-            raw_idea = st.text_input("Gig Idea (Type and click AI Cook)", value=st.session_state.ai_draft['title'])
-            if st.button("✨ AI Cook", type="secondary"):
-                with st.spinner("Cooking..."):
-                    result = ai_estimate(raw_idea)
-                    if result:
-                        st.session_state.ai_draft['title'] = result.get('suggestedTitle', raw_idea)
-                        st.session_state.ai_draft['hours'] = result.get('suggestedHours', 1.0)
-                        st.session_state.ai_draft['rate'] = result.get('suggestedRate', 300.0)
-                        st.rerun()
-
-            # The Actual Form
             with st.form("dispatch_form"):
-                final_title = st.text_input("Final Gig Title", value=st.session_state.ai_draft['title'])
+                final_title = st.text_input("Gig Title")
                 
                 # SQUAD MODE - Streamlit multiselect is built for this!
                 emp_options = {e['name']: e['id'] for e in EMPLOYEES}
                 selected_squad_names = st.multiselect("👥 Build the Syndicate", list(emp_options.keys()))
                 
                 h_col, r_col = st.columns(2)
-                hours = h_col.number_input("Hours / Person", min_value=0.5, step=0.5, value=float(st.session_state.ai_draft['hours']))
-                rate = r_col.number_input("Rate / Hr (Ksh)", min_value=50.0, step=10.0, value=float(st.session_state.ai_draft['rate']))
+                hours = h_col.number_input("Hours / Person", min_value=0.5, step=0.5, value=1.0)
+                rate = r_col.number_input("Rate / Hr (Ksh)", min_value=50.0, step=10.0, value=300.0)
                 
                 submitted = st.form_submit_button("🚀 Dispatch to Squad", type="primary")
                 
@@ -153,7 +141,6 @@ elif st.session_state.current_user['role'] == 'admin':
                             }
                             st.session_state.tasks.append(new_task)
                         
-                        st.session_state.ai_draft = {"title": "", "hours": 1.0, "rate": 300.0}
                         st.success(f"Dispatched to {len(selected_squad_names)} hustlers!")
                         st.rerun()
 
