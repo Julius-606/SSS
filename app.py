@@ -9,13 +9,11 @@ import traceback
 # --- CONFIG & SECRETS SETUP ---
 st.set_page_config(page_title="SSS Portal OS", layout="wide", page_icon="✨")
 
-# DEFAULT ADMIN CREDENTIALS
 ADMIN_USER = "admin"
 ADMIN_PASS = "admin@SSS"
-
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1lwK7P0Ul32suA1tOJMwrvPwawkMcVXIz5zNECVeUtfQ/edit?usp=sharing"
 
-# --- 🛑 GOOGLE SHEETS CONNECTION (THE VIP LOUNGE) 🛑 ---
+# --- 🛑 1. THE VIP CONNECTION (CACHED - ONLY RUNS ONCE) 🛑 ---
 @st.cache_resource
 def get_gspread_client():
     try:
@@ -30,107 +28,113 @@ def get_gspread_client():
         st.error("🚨 Stop-loss hit! Failed to authenticate with Google. Check your secrets!")
         st.stop()
 
-client = get_gspread_client()
-
-# Try to open the main workbook
-try:
-    workbook = client.open_by_url(SHEET_URL)
-except Exception as e:
-    st.error(f"🚨 Failed to find the target Google Sheet. Did you share it with the service account email as an Editor?\n\nError: {e}")
-    st.stop()
-
-# --- HELPER: SPAWN MISSING SHEETS ---
-def get_or_create_worksheet(wb, title, headers):
+# --- 🛑 2. MOUNT THE WORKSHEETS (CACHED - ONLY RUNS ONCE) 🛑 ---
+@st.cache_resource
+def get_worksheets():
+    client = get_gspread_client()
     try:
-        ws = wb.worksheet(title)
-    except gspread.exceptions.WorksheetNotFound:
-        # Spawning a new sheet because it doesn't exist!
-        ws = wb.add_worksheet(title=title, rows="1000", cols="20")
-        ws.append_row(headers)
-    return ws
+        workbook = client.open_by_url(SHEET_URL)
+    except Exception as e:
+        st.error(f"🚨 Failed to find the target Google Sheet.\n\nError: {e}")
+        st.stop()
+        
+    def get_or_create(title, headers):
+        try:
+            ws = workbook.worksheet(title)
+        except gspread.exceptions.WorksheetNotFound:
+            ws = workbook.add_worksheet(title=title, rows="1000", cols="20")
+            ws.append_row(headers)
+        return ws
 
-# --- INITIALIZE TABS (THE LEDGERS) ---
-emps_ws = get_or_create_worksheet(workbook, "Employees", ["id", "name", "username", "password"])
-tasks_ws = get_or_create_worksheet(workbook, "Tasks", ["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned"])
-settings_ws = get_or_create_worksheet(workbook, "Settings", ["setting_key", "setting_value"])
+    emps_ws = get_or_create("Employees", ["id", "name", "username", "password"])
+    tasks_ws = get_or_create("Tasks", ["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned"])
+    settings_ws = get_or_create("Settings", ["setting_key", "setting_value"])
+    
+    # Initialize default admins if Employees is empty
+    if not emps_ws.get_all_records():
+        emps_ws.append_row(["emp1", "Wanjiku (Nanny Pro)", "wanjiku", "password123"])
+        emps_ws.append_row(["emp2", "Ochieng (Deep Cleaner)", "ochieng", "password123"])
+        
+    return workbook, emps_ws, tasks_ws, settings_ws
 
-# If Employees is empty (just headers), spawn default users
-emps_records = emps_ws.get_all_records()
-if not emps_records:
-    emps_ws.append_row(["emp1", "Wanjiku (Nanny Pro)", "wanjiku", "password123"])
-    emps_ws.append_row(["emp2", "Ochieng (Deep Cleaner)", "ochieng", "password123"])
-    emps_records = emps_ws.get_all_records()
+workbook, emps_ws, tasks_ws, settings_ws = get_worksheets()
 
-# --- THE MONTHLY AUTO-ARCHIVE ENGINE (CLOUD VERSION) ---
+# --- 🛑 3. THE LIQUIDITY POOL (PULL DATA & CACHE FOR 30 SECONDS) 🛑 ---
+# ttl=30 means it won't ask Google for new data for 30 secs unless we manually clear the cache!
+@st.cache_data(ttl=30)
+def fetch_market_data():
+    emps_df = pd.DataFrame(emps_ws.get_all_records())
+    if not emps_df.empty:
+        emps_df['id'] = emps_df['id'].astype(str)
+        emps_df['username'] = emps_df['username'].astype(str)
+        emps_df['password'] = emps_df['password'].astype(str)
+
+    tasks_records = tasks_ws.get_all_records()
+    if tasks_records:
+        tasks_df = pd.DataFrame(tasks_records)
+        tasks_df['hours'] = pd.to_numeric(tasks_df['hours'], errors='coerce')
+        tasks_df['rate'] = pd.to_numeric(tasks_df['rate'], errors='coerce')
+    else:
+        tasks_df = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned"])
+        
+    settings_df = pd.DataFrame(settings_ws.get_all_records())
+    
+    return emps_df, tasks_df, settings_df
+
+# Load the cached data
+emps_df, tasks_df, settings_df = fetch_market_data()
+
+# --- THE MONTHLY AUTO-ARCHIVE ENGINE ---
 CURRENT_MONTH = datetime.now().strftime("%Y-%m")
 
-# Check last reset from Settings sheet
-settings_records = settings_ws.get_all_records()
-settings_df = pd.DataFrame(settings_records)
-
 if settings_df.empty or 'last_reset' not in settings_df['setting_key'].values:
-    # Initialize the tracker if it doesn't exist
     settings_ws.append_row(["last_reset", CURRENT_MONTH])
+    fetch_market_data.clear() # Clear cache so it re-pulls next time
     last_reset = CURRENT_MONTH
 else:
     last_reset = settings_df.loc[settings_df['setting_key'] == 'last_reset', 'setting_value'].iloc[0]
 
-# If we entered a new month, trigger the rollover!
 if last_reset != CURRENT_MONTH:
     try:
-        tasks_records = tasks_ws.get_all_records()
-        if tasks_records:
-            temp_tasks_df = pd.DataFrame(tasks_records)
-            
-            # Keep active gigs
+        if not tasks_df.empty:
             active_statuses = ['Pending', 'In Progress', 'Completed']
-            keep_df = temp_tasks_df[temp_tasks_df['status'].isin(active_statuses)]
-            
-            # Archive settled/blown gigs
-            archive_df = temp_tasks_df[~temp_tasks_df['status'].isin(active_statuses)]
+            keep_df = tasks_df[tasks_df['status'].isin(active_statuses)]
+            archive_df = tasks_df[~tasks_df['status'].isin(active_statuses)]
             
             if not archive_df.empty:
                 archive_title = f"Archive_{last_reset}"
-                archive_ws = get_or_create_worksheet(workbook, archive_title, list(archive_df.columns))
-                # Append archived rows
+                try:
+                    archive_ws = workbook.worksheet(archive_title)
+                except gspread.exceptions.WorksheetNotFound:
+                    archive_ws = workbook.add_worksheet(title=archive_title, rows="1000", cols="20")
+                    archive_ws.append_row(list(archive_df.columns))
                 archive_ws.append_rows(archive_df.values.tolist())
             
-            # Overwrite main ledger with ONLY the carry-over active gigs
+            # Save the active ones back
             tasks_ws.clear()
             tasks_ws.update([keep_df.columns.values.tolist()] + keep_df.fillna('').values.tolist())
         
-        # Update the tracker cell
+        # Update settings tracker
         cell = settings_ws.find("last_reset")
         settings_ws.update_cell(cell.row, cell.col + 1, CURRENT_MONTH)
+        
+        # MAJOR KEY: Clear the cache because we just edited the cloud data!
+        fetch_market_data.clear()
+        st.rerun()
         
     except Exception as e:
         st.error(f"Archive Engine Failed: {e}")
 
-# --- PULL THE LIQUIDITY POOLS (LOAD DATAFRAMES) ---
-emps_df = pd.DataFrame(emps_ws.get_all_records())
-if not emps_df.empty:
-    emps_df['id'] = emps_df['id'].astype(str)
-    emps_df['username'] = emps_df['username'].astype(str)
-    emps_df['password'] = emps_df['password'].astype(str)
-
-tasks_records = tasks_ws.get_all_records()
-if tasks_records:
-    tasks_df = pd.DataFrame(tasks_records)
-    tasks_df['hours'] = pd.to_numeric(tasks_df['hours'], errors='coerce')
-    tasks_df['rate'] = pd.to_numeric(tasks_df['rate'], errors='coerce')
-else:
-    tasks_df = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned"])
-
-# --- WRITE FUNCTIONS ---
+# --- WRITE FUNCTIONS (WITH CACHE CLEARING) ---
 def save_tasks(df):
-    # This surgical strike clears the sheet and rewrites it with the updated Pandas dataframe.
-    # It perfectly updates row 6 without messing up row 10!
     tasks_ws.clear()
     tasks_ws.update([df.columns.values.tolist()] + df.fillna('').values.tolist())
+    fetch_market_data.clear() # Flushes the cache so the next rerun sees the new data! 🚀
 
 def save_emps(df):
     emps_ws.clear()
     emps_ws.update([df.columns.values.tolist()] + df.fillna('').values.tolist())
+    fetch_market_data.clear() 
 
 # Initialize Session State
 if 'current_user' not in st.session_state:
@@ -196,7 +200,8 @@ elif st.session_state.current_user['role'] == 'admin':
                         "password": new_emp_pass
                     }])
                     emps_df = pd.concat([emps_df, new_row], ignore_index=True)
-                    save_emps(emps_df)
+                    with st.spinner("Writing to Google Cloud..."):
+                        save_emps(emps_df)
                     st.success(f"{new_emp_name} added! They can now log in.")
                     st.rerun()
             else:
@@ -259,7 +264,8 @@ elif st.session_state.current_user['role'] == 'admin':
                         
                         new_df = pd.DataFrame(new_records)
                         tasks_df = pd.concat([tasks_df, new_df], ignore_index=True)
-                        save_tasks(tasks_df)
+                        with st.spinner("Dispatching gigs to the blockchain..."):
+                            save_tasks(tasks_df)
                         
                         st.success(f"Dispatched to {len(selected_squad_names)} hustlers!")
                         st.rerun()
@@ -294,7 +300,8 @@ elif st.session_state.current_user['role'] == 'admin':
                         elif task['status'] == 'Completed':
                             if st.button("Mark Paid 💸", key=f"pay_{task['id']}"):
                                 tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Paid'
-                                save_tasks(tasks_df)
+                                with st.spinner("Settling funds..."):
+                                    save_tasks(tasks_df)
                                 st.rerun()
 
     st.write("---")
@@ -308,6 +315,10 @@ elif st.session_state.current_user['role'] == 'admin':
         st.dataframe(display_df, use_container_width=True, hide_index=True)
     else:
         st.info("Ledger is completely empty.")
+        
+    if st.button("🔄 Force Refresh Ledger", type="secondary"):
+        fetch_market_data.clear()
+        st.rerun()
 
 # --- 3. EMPLOYEE DASHBOARD (THE TRENCHES) ---
 elif st.session_state.current_user['role'] == 'employee':
@@ -347,10 +358,14 @@ elif st.session_state.current_user['role'] == 'employee':
     st.write("---")
     st.subheader("💼 My Hitlist")
     
+    if st.button("🔄 Refresh Market", type="secondary"):
+        fetch_market_data.clear()
+        st.rerun()
+    
     if my_tasks.empty:
         st.info("No tasks assigned. You're officially off the clock. Go study some clinical meds or chart EUR/USD. 📉")
     else:
-        for i, task in my_tasks.iterrows(): # Iterating normally, no need to reverse twice if they prefer normal order
+        for i, task in my_tasks.iterrows():
             if pd.isna(task.get('title')): continue
             
             with st.container(border=True):
@@ -363,18 +378,20 @@ elif st.session_state.current_user['role'] == 'employee':
                 with colB:
                     if task['status'] == 'Pending':
                         if st.button("Start Gig 🏃", key=f"start_{task['id']}", type="secondary"):
-                            # This edits ONLY this specific task! 🎯
                             tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'In Progress'
-                            save_tasks(tasks_df)
+                            with st.spinner("Locking in entry..."):
+                                save_tasks(tasks_df)
                             st.rerun()
                     elif task['status'] == 'In Progress':
                         if st.button("Mark Done ✔️", key=f"done_{task['id']}", type="primary"):
                             tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Completed'
-                            save_tasks(tasks_df)
+                            with st.spinner("Securing profits..."):
+                                save_tasks(tasks_df)
                             st.rerun()
                         if st.button("Absconded 🏃‍♂️💨", key=f"abscond_{task['id']}"):
                             tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Absconded'
-                            save_tasks(tasks_df)
+                            with st.spinner("Blowing the account..."):
+                                save_tasks(tasks_df)
                             st.rerun()
                     elif task['status'] == 'Completed':
                         st.warning("Awaiting Funds ⏳")
