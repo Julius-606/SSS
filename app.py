@@ -1,50 +1,87 @@
 import streamlit as st
 import pandas as pd
-import os
 import time
 from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
+import traceback
 
-# --- CONFIG & DB SETUP ---
+# --- CONFIG & SECRETS SETUP ---
 st.set_page_config(page_title="SSS Portal OS", layout="wide", page_icon="✨")
-
-TASKS_CSV = "tasks.csv"
-EMPS_CSV = "employees.csv"
-RESET_TRACKER = "last_reset.txt"
 
 # DEFAULT ADMIN CREDENTIALS
 ADMIN_USER = "admin"
 ADMIN_PASS = "admin@SSS"
 
-# --- THE COLD WALLETS (CSV ENGINES) ---
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1lwK7P0Ul32suA1tOJMwrvPwawkMcVXIz5zNECVeUtfQ/edit?usp=sharing"
 
-# 1. Initialize Employees CSV
-if not os.path.exists(EMPS_CSV):
-    df_emps_init = pd.DataFrame([
-        {"id": "emp1", "name": "Wanjiku (Nanny Pro)", "username": "wanjiku", "password": "password123"},
-        {"id": "emp2", "name": "Ochieng (Deep Cleaner)", "username": "ochieng", "password": "password123"}
-    ])
-    df_emps_init.to_csv(EMPS_CSV, index=False)
+# --- 🛑 GOOGLE SHEETS CONNECTION (THE VIP LOUNGE) 🛑 ---
+@st.cache_resource
+def get_gspread_client():
+    try:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(credentials)
+    except Exception as e:
+        st.error("🚨 Stop-loss hit! Failed to authenticate with Google. Check your secrets!")
+        st.stop()
 
-# 2. Initialize Tasks CSV
-if not os.path.exists(TASKS_CSV):
-    df_tasks_init = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned"])
-    df_tasks_init.to_csv(TASKS_CSV, index=False)
+client = get_gspread_client()
 
-# 3. THE MONTHLY AUTO-ARCHIVE ENGINE
+# Try to open the main workbook
+try:
+    workbook = client.open_by_url(SHEET_URL)
+except Exception as e:
+    st.error(f"🚨 Failed to find the target Google Sheet. Did you share it with the service account email as an Editor?\n\nError: {e}")
+    st.stop()
+
+# --- HELPER: SPAWN MISSING SHEETS ---
+def get_or_create_worksheet(wb, title, headers):
+    try:
+        ws = wb.worksheet(title)
+    except gspread.exceptions.WorksheetNotFound:
+        # Spawning a new sheet because it doesn't exist!
+        ws = wb.add_worksheet(title=title, rows="1000", cols="20")
+        ws.append_row(headers)
+    return ws
+
+# --- INITIALIZE TABS (THE LEDGERS) ---
+emps_ws = get_or_create_worksheet(workbook, "Employees", ["id", "name", "username", "password"])
+tasks_ws = get_or_create_worksheet(workbook, "Tasks", ["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned"])
+settings_ws = get_or_create_worksheet(workbook, "Settings", ["setting_key", "setting_value"])
+
+# If Employees is empty (just headers), spawn default users
+emps_records = emps_ws.get_all_records()
+if not emps_records:
+    emps_ws.append_row(["emp1", "Wanjiku (Nanny Pro)", "wanjiku", "password123"])
+    emps_ws.append_row(["emp2", "Ochieng (Deep Cleaner)", "ochieng", "password123"])
+    emps_records = emps_ws.get_all_records()
+
+# --- THE MONTHLY AUTO-ARCHIVE ENGINE (CLOUD VERSION) ---
 CURRENT_MONTH = datetime.now().strftime("%Y-%m")
 
-if not os.path.exists(RESET_TRACKER):
-    with open(RESET_TRACKER, "w") as f:
-        f.write(CURRENT_MONTH)
+# Check last reset from Settings sheet
+settings_records = settings_ws.get_all_records()
+settings_df = pd.DataFrame(settings_records)
 
-with open(RESET_TRACKER, "r") as f:
-    last_reset = f.read().strip()
+if settings_df.empty or 'last_reset' not in settings_df['setting_key'].values:
+    # Initialize the tracker if it doesn't exist
+    settings_ws.append_row(["last_reset", CURRENT_MONTH])
+    last_reset = CURRENT_MONTH
+else:
+    last_reset = settings_df.loc[settings_df['setting_key'] == 'last_reset', 'setting_value'].iloc[0]
 
 # If we entered a new month, trigger the rollover!
-if last_reset != CURRENT_MONTH and os.path.exists(TASKS_CSV):
+if last_reset != CURRENT_MONTH:
     try:
-        temp_tasks_df = pd.read_csv(TASKS_CSV)
-        if not temp_tasks_df.empty:
+        tasks_records = tasks_ws.get_all_records()
+        if tasks_records:
+            temp_tasks_df = pd.DataFrame(tasks_records)
+            
             # Keep active gigs
             active_statuses = ['Pending', 'In Progress', 'Completed']
             keep_df = temp_tasks_df[temp_tasks_df['status'].isin(active_statuses)]
@@ -53,46 +90,47 @@ if last_reset != CURRENT_MONTH and os.path.exists(TASKS_CSV):
             archive_df = temp_tasks_df[~temp_tasks_df['status'].isin(active_statuses)]
             
             if not archive_df.empty:
-                archive_filename = f"archive_{last_reset}.csv"
-                if os.path.exists(archive_filename):
-                    existing_archive = pd.read_csv(archive_filename)
-                    combined_archive = pd.concat([existing_archive, archive_df], ignore_index=True)
-                    combined_archive.to_csv(archive_filename, index=False)
-                else:
-                    archive_df.to_csv(archive_filename, index=False)
+                archive_title = f"Archive_{last_reset}"
+                archive_ws = get_or_create_worksheet(workbook, archive_title, list(archive_df.columns))
+                # Append archived rows
+                archive_ws.append_rows(archive_df.values.tolist())
             
             # Overwrite main ledger with ONLY the carry-over active gigs
-            keep_df.to_csv(TASKS_CSV, index=False)
+            tasks_ws.clear()
+            tasks_ws.update([keep_df.columns.values.tolist()] + keep_df.fillna('').values.tolist())
         
-        # Update the tracker file to the new month
-        with open(RESET_TRACKER, "w") as f:
-            f.write(CURRENT_MONTH)
+        # Update the tracker cell
+        cell = settings_ws.find("last_reset")
+        settings_ws.update_cell(cell.row, cell.col + 1, CURRENT_MONTH)
+        
     except Exception as e:
         st.error(f"Archive Engine Failed: {e}")
 
-# Load the liquidity pools
-try:
-    emps_df = pd.read_csv(EMPS_CSV)
+# --- PULL THE LIQUIDITY POOLS (LOAD DATAFRAMES) ---
+emps_df = pd.DataFrame(emps_ws.get_all_records())
+if not emps_df.empty:
     emps_df['id'] = emps_df['id'].astype(str)
     emps_df['username'] = emps_df['username'].astype(str)
     emps_df['password'] = emps_df['password'].astype(str)
-except Exception as e:
-    st.error(f"Failed to read Employee Ledger. Error: {e}")
-    emps_df = pd.DataFrame(columns=["id", "name", "username", "password"])
 
-try:
-    tasks_df = pd.read_csv(TASKS_CSV)
+tasks_records = tasks_ws.get_all_records()
+if tasks_records:
+    tasks_df = pd.DataFrame(tasks_records)
     tasks_df['hours'] = pd.to_numeric(tasks_df['hours'], errors='coerce')
     tasks_df['rate'] = pd.to_numeric(tasks_df['rate'], errors='coerce')
-except Exception as e:
-    st.error(f"Failed to read Tasks Ledger. Error: {e}")
+else:
     tasks_df = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned"])
 
+# --- WRITE FUNCTIONS ---
 def save_tasks(df):
-    df.to_csv(TASKS_CSV, index=False)
+    # This surgical strike clears the sheet and rewrites it with the updated Pandas dataframe.
+    # It perfectly updates row 6 without messing up row 10!
+    tasks_ws.clear()
+    tasks_ws.update([df.columns.values.tolist()] + df.fillna('').values.tolist())
 
 def save_emps(df):
-    df.to_csv(EMPS_CSV, index=False)
+    emps_ws.clear()
+    emps_ws.update([df.columns.values.tolist()] + df.fillna('').values.tolist())
 
 # Initialize Session State
 if 'current_user' not in st.session_state:
@@ -100,6 +138,7 @@ if 'current_user' not in st.session_state:
 
 # --- HELPER FUNCTIONS ---
 def get_employee_name(emp_id):
+    if emps_df.empty: return "Unknown Hustler 👻"
     match = emps_df[emps_df['id'] == str(emp_id)]
     if not match.empty:
         return match.iloc[0]['name']
@@ -146,7 +185,7 @@ elif st.session_state.current_user['role'] == 'admin':
         
         if st.form_submit_button("Hire Hustler 🤝"):
             if new_emp_name and new_emp_user and new_emp_pass:
-                if new_emp_user in emps_df['username'].values:
+                if not emps_df.empty and new_emp_user in emps_df['username'].values:
                     st.error("Username already taken! Pick another one.")
                 else:
                     new_id = f"emp{int(time.time())}"
@@ -165,18 +204,18 @@ elif st.session_state.current_user['role'] == 'admin':
                 
     st.sidebar.write("---")
     
-    # THE ADMIN PHASE SHIFT
     st.sidebar.subheader("👁️ Phase Mode")
-    phase_target = st.sidebar.selectbox("Enter Hustler's Dashboard:", emps_df['name'].tolist())
-    if st.sidebar.button("Phase In 👻"):
-        emp_row = emps_df[emps_df['name'] == phase_target].iloc[0]
-        st.session_state.current_user = {
-            "role": "employee", 
-            "id": emp_row['id'], 
-            "name": emp_row['name'],
-            "is_phased": True # Flaggers for the logout button
-        }
-        st.rerun()
+    if not emps_df.empty:
+        phase_target = st.sidebar.selectbox("Enter Hustler's Dashboard:", emps_df['name'].tolist())
+        if st.sidebar.button("Phase In 👻"):
+            emp_row = emps_df[emps_df['name'] == phase_target].iloc[0]
+            st.session_state.current_user = {
+                "role": "employee", 
+                "id": emp_row['id'], 
+                "name": emp_row['name'],
+                "is_phased": True
+            }
+            st.rerun()
 
     st.sidebar.write("---")
     if st.sidebar.button("Log Out 🚪", type="primary"):
@@ -185,19 +224,17 @@ elif st.session_state.current_user['role'] == 'admin':
 
     col1, col2 = st.columns([1, 2])
     
-    # Left Col: Create Task Form
     with col1:
         st.subheader("➕ Dispatch a Gig")
         with st.container(border=True):
             with st.form("dispatch_form"):
                 final_title = st.text_input("Gig Title")
                 
-                emp_options = dict(zip(emps_df['name'], emps_df['id']))
+                emp_options = dict(zip(emps_df['name'], emps_df['id'])) if not emps_df.empty else {}
                 selected_squad_names = st.multiselect("👥 Build the Syndicate", list(emp_options.keys()))
                 
                 h_col, r_col = st.columns(2)
                 hours = h_col.number_input("Hours / Person", min_value=0.5, step=0.5, value=1.0)
-                # Removed the min_value limit. It can go down to 0.0 now!
                 rate = r_col.number_input("Rate / Hr (Ksh)", min_value=0.0, step=10.0, value=300.0)
                 
                 submitted = st.form_submit_button("🚀 Dispatch to Squad", type="primary")
@@ -207,7 +244,6 @@ elif st.session_state.current_user['role'] == 'admin':
                         st.error("⚠️ Pick at least one hustler bro, don't leave the gig hanging.")
                     else:
                         new_records = []
-                        # Specific down to the second!
                         exact_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         for name in selected_squad_names:
                             emp_id = emp_options[name]
@@ -228,11 +264,13 @@ elif st.session_state.current_user['role'] == 'admin':
                         st.success(f"Dispatched to {len(selected_squad_names)} hustlers!")
                         st.rerun()
 
-    # Right Col: Active Gigs
     with col2:
         st.subheader("⚡ Active Market (Needs Attention)")
-        active_tasks = tasks_df[tasks_df['status'].isin(['Pending', 'In Progress', 'Completed'])]
-        
+        if not tasks_df.empty:
+            active_tasks = tasks_df[tasks_df['status'].isin(['Pending', 'In Progress', 'Completed'])]
+        else:
+            active_tasks = pd.DataFrame()
+            
         if active_tasks.empty:
             st.info("No active gigs right now. The market is consolidating. 📉")
         else:
@@ -282,7 +320,6 @@ elif st.session_state.current_user['role'] == 'employee':
     
     st.sidebar.write("---")
     
-    # Check if the Admin is phasing in!
     if is_phased:
         st.sidebar.warning("👁️ ADMIN PHASED IN")
         if st.sidebar.button("Return to God-Mode ⚡", type="primary"):
@@ -313,7 +350,7 @@ elif st.session_state.current_user['role'] == 'employee':
     if my_tasks.empty:
         st.info("No tasks assigned. You're officially off the clock. Go study some clinical meds or chart EUR/USD. 📉")
     else:
-        for i, task in my_tasks.iloc[::-1].iterrows():
+        for i, task in my_tasks.iterrows(): # Iterating normally, no need to reverse twice if they prefer normal order
             if pd.isna(task.get('title')): continue
             
             with st.container(border=True):
@@ -326,6 +363,7 @@ elif st.session_state.current_user['role'] == 'employee':
                 with colB:
                     if task['status'] == 'Pending':
                         if st.button("Start Gig 🏃", key=f"start_{task['id']}", type="secondary"):
+                            # This edits ONLY this specific task! 🎯
                             tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'In Progress'
                             save_tasks(tasks_df)
                             st.rerun()
