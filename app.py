@@ -47,7 +47,8 @@ def get_worksheets():
         return ws
 
     emps_ws = get_or_create("Employees", ["id", "name", "username", "password"])
-    tasks_ws = get_or_create("Tasks", ["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned"])
+    # Added the new confluence indicators to the headers! 📊
+    tasks_ws = get_or_create("Tasks", ["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout"])
     settings_ws = get_or_create("Settings", ["setting_key", "setting_value"])
     
     # Initialize default admins if Employees is empty
@@ -74,8 +75,13 @@ def fetch_market_data():
         tasks_df = pd.DataFrame(tasks_records)
         tasks_df['hours'] = pd.to_numeric(tasks_df['hours'], errors='coerce')
         tasks_df['rate'] = pd.to_numeric(tasks_df['rate'], errors='coerce')
+        
+        # Guard clause: If the old sheet data is loaded, patch in the missing columns so we don't crash
+        if 'due_date' not in tasks_df.columns: tasks_df['due_date'] = ""
+        if 'time_marked_done' not in tasks_df.columns: tasks_df['time_marked_done'] = ""
+        if 'payout' not in tasks_df.columns: tasks_df['payout'] = tasks_df['hours'] * tasks_df['rate']
     else:
-        tasks_df = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned"])
+        tasks_df = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout"])
         
     settings_df = pd.DataFrame(settings_ws.get_all_records())
     
@@ -242,6 +248,11 @@ elif st.session_state.current_user['role'] == 'admin':
                 hours = h_col.number_input("Hours / Person", min_value=0.5, step=0.5, value=1.0)
                 rate = r_col.number_input("Rate / Hr (Ksh)", min_value=0.0, step=10.0, value=300.0)
                 
+                # Setup the trade expiry (Due Date) 📅
+                d_col, t_col = st.columns(2)
+                due_date = d_col.date_input("Target Date (Due)")
+                due_time = t_col.time_input("Target Time (Due)")
+                
                 submitted = st.form_submit_button("🚀 Dispatch to Squad", type="primary")
                 
                 if submitted:
@@ -250,6 +261,9 @@ elif st.session_state.current_user['role'] == 'admin':
                     else:
                         new_records = []
                         exact_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        final_due = f"{due_date} {due_time}"
+                        payout_val = hours * rate
+                        
                         for name in selected_squad_names:
                             emp_id = emp_options[name]
                             new_records.append({
@@ -259,7 +273,10 @@ elif st.session_state.current_user['role'] == 'admin':
                                 "hours": hours,
                                 "rate": rate,
                                 "status": "Pending",
-                                "date_assigned": exact_time_str
+                                "date_assigned": exact_time_str,
+                                "due_date": final_due,
+                                "time_marked_done": "", # Empty until they hit TP
+                                "payout": payout_val
                             })
                         
                         new_df = pd.DataFrame(new_records)
@@ -267,7 +284,7 @@ elif st.session_state.current_user['role'] == 'admin':
                         with st.spinner("Dispatching gigs to the blockchain..."):
                             save_tasks(tasks_df)
                         
-                        st.success(f"Dispatched to {len(selected_squad_names)} hustlers!")
+                        st.success(f"Dispatched to {len(selected_squad_names)} hustlers! Target set. 🎯")
                         st.rerun()
 
     with col2:
@@ -289,9 +306,10 @@ elif st.session_state.current_user['role'] == 'admin':
                         st.markdown(f"**{task['title']}**")
                         emp_name = get_employee_name(task['employee_Id']).split(' ')[0]
                         date_str = task.get('date_assigned', 'Unknown Date')
-                        st.caption(f"👤 {emp_name} | ⏳ {task['hours']}h | 💵 Ksh {task['rate']}/h | 🕒 {date_str}")
+                        due_str = task.get('due_date', 'N/A')
+                        st.caption(f"👤 {emp_name} | ⏳ {task['hours']}h | 💵 Ksh {task['rate']}/h | 🎯 Due: {due_str}")
                     with t_col2:
-                        st.markdown(f"**Ksh {float(task['hours']) * float(task['rate'])}**")
+                        st.markdown(f"**Ksh {task.get('payout', float(task['hours']) * float(task['rate']))}**")
                         
                         if task['status'] == 'Pending':
                             st.warning("Cooking ⏳")
@@ -310,8 +328,9 @@ elif st.session_state.current_user['role'] == 'admin':
     if not tasks_df.empty:
         display_df = tasks_df.copy()
         display_df['Employee Name'] = display_df['employee_Id'].apply(get_employee_name)
-        display_df['Total Payout (Ksh)'] = display_df['hours'] * display_df['rate']
-        display_df = display_df[['id', 'date_assigned', 'title', 'Employee Name', 'hours', 'rate', 'Total Payout (Ksh)', 'status']]
+        # We now use the actual payout column if it exists, otherwise fallback to calculation
+        display_df['Total Payout (Ksh)'] = display_df.get('payout', display_df['hours'] * display_df['rate'])
+        display_df = display_df[['id', 'date_assigned', 'due_date', 'time_marked_done', 'title', 'Employee Name', 'hours', 'rate', 'Total Payout (Ksh)', 'status']]
         st.dataframe(display_df, use_container_width=True, hide_index=True)
     else:
         st.info("Ledger is completely empty.")
@@ -344,8 +363,8 @@ elif st.session_state.current_user['role'] == 'employee':
     if not tasks_df.empty:
         tasks_df['employee_Id'] = tasks_df['employee_Id'].astype(str)
         my_tasks = tasks_df[tasks_df['employee_Id'] == user_id]
-        total_earned = sum(float(t['hours']) * float(t['rate']) for _, t in my_tasks.iterrows() if t['status'] == 'Paid')
-        pending_bag = sum(float(t['hours']) * float(t['rate']) for _, t in my_tasks.iterrows() if t['status'] in ['Pending', 'In Progress', 'Completed'])
+        total_earned = sum(float(t.get('payout', float(t['hours']) * float(t['rate']))) for _, t in my_tasks.iterrows() if t['status'] == 'Paid')
+        pending_bag = sum(float(t.get('payout', float(t['hours']) * float(t['rate']))) for _, t in my_tasks.iterrows() if t['status'] in ['Pending', 'In Progress', 'Completed'])
     else:
         my_tasks = pd.DataFrame()
         total_earned = 0
@@ -373,7 +392,9 @@ elif st.session_state.current_user['role'] == 'employee':
                 with colA:
                     st.markdown(f"### {task['title']}")
                     date_str = task.get('date_assigned', 'Unknown Date')
-                    st.caption(f"🕒 Assigned: {date_str} | Allocated: {task['hours']} hrs @ Ksh {task['rate']}/hr  => **Target TP: Ksh {float(task['hours']) * float(task['rate'])}**")
+                    due_str = task.get('due_date', 'N/A')
+                    payout_val = task.get('payout', float(task['hours']) * float(task['rate']))
+                    st.caption(f"🕒 Assigned: {date_str} | 🎯 Due: {due_str} | Allocated: {task['hours']} hrs @ Ksh {task['rate']}/hr  => **Target TP: Ksh {payout_val}**")
 
                 with colB:
                     if task['status'] == 'Pending':
@@ -384,8 +405,10 @@ elif st.session_state.current_user['role'] == 'employee':
                             st.rerun()
                     elif task['status'] == 'In Progress':
                         if st.button("Mark Done ✔️", key=f"done_{task['id']}", type="primary"):
+                            # The moment the TP hits, log the exact Kisumu time ⏱️
                             tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Completed'
-                            with st.spinner("Securing profits..."):
+                            tasks_df.loc[tasks_df['id'] == task['id'], 'time_marked_done'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            with st.spinner("Securing profits and logging the timestamp..."):
                                 save_tasks(tasks_df)
                             st.rerun()
                         if st.button("Absconded 🏃‍♂️💨", key=f"abscond_{task['id']}"):
