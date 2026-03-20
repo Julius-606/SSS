@@ -13,7 +13,7 @@ RESET_TRACKER = "last_reset.txt"
 
 # DEFAULT ADMIN CREDENTIALS
 ADMIN_USER = "admin"
-ADMIN_PASS = "admin123"
+ADMIN_PASS = "admin@SSS"
 
 # --- THE COLD WALLETS (CSV ENGINES) ---
 
