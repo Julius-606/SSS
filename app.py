@@ -13,6 +13,40 @@ ADMIN_USER = "admin"
 ADMIN_PASS = "admin@SSS"
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1lwK7P0Ul32suA1tOJMwrvPwawkMcVXIz5zNECVeUtfQ/edit?usp=sharing"
 
+# --- 🛑 CSS INJECTION ENGINE (DYNAMIC BACKGROUNDS) 🛑 ---
+def inject_custom_bg(role):
+    if role == 'admin':
+        # VIP God Mode - Premium Deep Teal/Gold vibes 👑
+        bg_css = """
+        <style>
+        .stApp {
+            background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
+            color: #ffffff;
+        }
+        </style>
+        """
+    elif role == 'employee':
+        # The Trenches - Gritty Midnight Blue 🌃
+        bg_css = """
+        <style>
+        .stApp {
+            background: linear-gradient(135deg, #141E30 0%, #243B55 100%);
+            color: #ffffff;
+        }
+        </style>
+        """
+    else:
+        # Login Screen - Institutional Dark Pool / Matrix 📉
+        bg_css = """
+        <style>
+        .stApp {
+            background: radial-gradient(circle, #1a1a1d 0%, #000000 100%);
+            color: #ffffff;
+        }
+        </style>
+        """
+    st.markdown(bg_css, unsafe_allow_html=True)
+
 # --- 🛑 1. THE VIP CONNECTION (CACHED - ONLY RUNS ONCE) 🛑 ---
 @st.cache_resource
 def get_gspread_client():
@@ -156,6 +190,7 @@ def get_employee_name(emp_id):
 
 # --- 1. LOGIN SCREEN (THE FIREWALL) ---
 if st.session_state.current_user is None:
+    inject_custom_bg('login') # Apply Institutional Dark Pool background 📉
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<h1 style='text-align: center;'>✨ SSS Portal</h1>", unsafe_allow_html=True)
@@ -180,9 +215,15 @@ if st.session_state.current_user is None:
                             st.rerun()
                         else:
                             st.error("Invalid credentials. Stop-loss hit. 📉 Try again.")
+                            
+        # NEW UPDATE: Google Form Onboarding Link 📝
+        st.markdown("<br>", unsafe_allow_html=True)
+        form_url = "https://forms.google.com/your-form-link-here" # REPLACE WITH YOUR GOOGLE FORM URL!
+        st.markdown(f"<p style='text-align: center;'><a href='{form_url}' target='_blank' style='color: #4CAF50; text-decoration: none; font-weight: bold;'>🆕 Not in the syndicate yet? Submit your KYC & Apply Here! 📝</a></p>", unsafe_allow_html=True)
 
 # --- 2. ADMIN DASHBOARD (GOD MODE) ---
 elif st.session_state.current_user['role'] == 'admin':
+    inject_custom_bg('admin') # Apply Premium God-Mode background 👑
     st.sidebar.title("🛡️ Admin Command Center")
     st.sidebar.write("Managing the SSS Prop Firm.")
     
@@ -341,12 +382,25 @@ elif st.session_state.current_user['role'] == 'admin':
 
 # --- 3. EMPLOYEE DASHBOARD (THE TRENCHES) ---
 elif st.session_state.current_user['role'] == 'employee':
+    inject_custom_bg('employee') # Apply the Trenches background 🌃
     user_id = str(st.session_state.current_user['id'])
     user_name = st.session_state.current_user['name']
     is_phased = st.session_state.current_user.get('is_phased', False)
     
     st.sidebar.title("👤 My Profile")
     st.sidebar.write(f"Welcome back to the trenches,\n**{user_name}**.")
+    
+    st.sidebar.write("---")
+    
+    # NEW UPDATE: Help/Complaints SOS WhatsApp Button 🚨
+    st.sidebar.subheader("🛟 SOS / HQ Support")
+    st.sidebar.caption("Got margin called? Need backup? Send a signal to the boss.")
+    
+    # REPLACE WITH YOUR ACTUAL WHATSAPP NUMBER (Include country code, no '+', e.g., 254700123456)
+    whatsapp_number = "254700000000" 
+    whatsapp_msg = "Yo Boss! Quick issue from the SSS trenches:%20"
+    wa_url = f"https://wa.me/{whatsapp_number}?text={whatsapp_msg}"
+    st.sidebar.link_button("💬 WhatsApp The Boss", wa_url, use_container_width=True)
     
     st.sidebar.write("---")
     
@@ -382,43 +436,4 @@ elif st.session_state.current_user['role'] == 'employee':
         st.rerun()
     
     if my_tasks.empty:
-        st.info("No tasks assigned. You're officially off the clock. Go study some clinical meds or chart EUR/USD. 📉")
-    else:
-        for i, task in my_tasks.iterrows():
-            if pd.isna(task.get('title')): continue
-            
-            with st.container(border=True):
-                colA, colB = st.columns([3, 1])
-                with colA:
-                    st.markdown(f"### {task['title']}")
-                    date_str = task.get('date_assigned', 'Unknown Date')
-                    due_str = task.get('due_date', 'N/A')
-                    payout_val = task.get('payout', float(task['hours']) * float(task['rate']))
-                    st.caption(f"🕒 Assigned: {date_str} | 🎯 Due: {due_str} | Allocated: {task['hours']} hrs @ Ksh {task['rate']}/hr  => **Target TP: Ksh {payout_val}**")
-
-                with colB:
-                    if task['status'] == 'Pending':
-                        if st.button("Start Gig 🏃", key=f"start_{task['id']}", type="secondary"):
-                            tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'In Progress'
-                            with st.spinner("Locking in entry..."):
-                                save_tasks(tasks_df)
-                            st.rerun()
-                    elif task['status'] == 'In Progress':
-                        if st.button("Mark Done ✔️", key=f"done_{task['id']}", type="primary"):
-                            # The moment the TP hits, log the exact Kisumu time ⏱️
-                            tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Completed'
-                            tasks_df.loc[tasks_df['id'] == task['id'], 'time_marked_done'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            with st.spinner("Securing profits and logging the timestamp..."):
-                                save_tasks(tasks_df)
-                            st.rerun()
-                        if st.button("Absconded 🏃‍♂️💨", key=f"abscond_{task['id']}"):
-                            tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Absconded'
-                            with st.spinner("Blowing the account..."):
-                                save_tasks(tasks_df)
-                            st.rerun()
-                    elif task['status'] == 'Completed':
-                        st.warning("Awaiting Funds ⏳")
-                    elif task['status'] == 'Paid':
-                        st.success("Paid ✅")
-                    elif task['status'] == 'Absconded':
-                        st.error("Account Blown 🚩")
+        st.info("No tasks assigned. You're officially off the clock. Go study some clinical
