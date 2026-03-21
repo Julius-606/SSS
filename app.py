@@ -436,4 +436,4 @@ elif st.session_state.current_user['role'] == 'employee':
         st.rerun()
     
     if my_tasks.empty:
-        st.info("No tasks assigned. You're officially off the clock. Go study some clinical
+        st.info("No tasks assigned. You're officially off the clock. Go study some clinical")
