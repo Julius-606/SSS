@@ -13,35 +13,47 @@ ADMIN_USER = "admin"
 ADMIN_PASS = "admin@SSS"
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1lwK7P0Ul32suA1tOJMwrvPwawkMcVXIz5zNECVeUtfQ/edit?usp=sharing"
 
-# --- 🛑 CSS INJECTION ENGINE (DYNAMIC BACKGROUNDS) 🛑 ---
+# --- 🛑 CSS INJECTION ENGINE (DYNAMIC BACKGROUNDS - SKY BLUE/WHITE/GRAY THEME) 🛑 ---
+# 💸 Bro really hit us with the light theme, my eyes are getting margin called!
+# 🚀 Sky blue like the NFP data just sent our charts to the stratosphere.
 def inject_custom_bg(role):
     if role == 'admin':
-        # VIP God Mode - Premium Deep Teal/Gold vibes 👑
+        # VIP God Mode - Premium Sky Blue & Gray vibes 👑 (Up-trend clear skies!)
         bg_css = """
         <style>
         .stApp {
-            background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
-            color: #ffffff;
+            background: linear-gradient(135deg, #e0f2fe 0%, #ffffff 50%, #e5e7eb 100%);
+            color: #1e293b;
+        }
+        /* Forcing the text to be a clean dark slate gray so we don't go blind */
+        h1, h2, h3, h4, p, span, div {
+            color: #334155;
         }
         </style>
         """
     elif role == 'employee':
-        # The Trenches - Gritty Midnight Blue 🌃
+        # The Trenches - Clean White with soft Sky Blue & Gray ☁️
         bg_css = """
         <style>
         .stApp {
-            background: linear-gradient(135deg, #141E30 0%, #243B55 100%);
-            color: #ffffff;
+            background: linear-gradient(135deg, #ffffff 0%, #f0f9ff 50%, #f3f4f6 100%);
+            color: #1e293b;
+        }
+        h1, h2, h3, h4, p, span, div {
+            color: #334155;
         }
         </style>
         """
     else:
-        # Login Screen - Institutional Dark Pool / Matrix 📉
+        # Login Screen - Institutional Sky/White Pool 📉
         bg_css = """
         <style>
         .stApp {
-            background: radial-gradient(circle, #1a1a1d 0%, #000000 100%);
-            color: #ffffff;
+            background: radial-gradient(circle, #f8fafc 0%, #bae6fd 100%);
+            color: #1e293b;
+        }
+        h1, h2, h3, h4, p, span, div {
+            color: #0f172a;
         }
         </style>
         """
@@ -190,11 +202,11 @@ def get_employee_name(emp_id):
 
 # --- 1. LOGIN SCREEN (THE FIREWALL) ---
 if st.session_state.current_user is None:
-    inject_custom_bg('login') # Apply Institutional Dark Pool background 📉
+    inject_custom_bg('login') # Apply Institutional Light Pool background 📉
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<h1 style='text-align: center;'>✨ SSS Portal</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: gray; margin-bottom: 30px;'>Swift-hands Student Services. Authorized Personnel Only.</p>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #4b5563; margin-bottom: 30px;'>Swift-hands Student Services. Authorized Personnel Only.</p>", unsafe_allow_html=True)
         
         with st.container(border=True):
             st.markdown("### 🔐 Secure Login")
@@ -216,10 +228,10 @@ if st.session_state.current_user is None:
                         else:
                             st.error("Invalid credentials. Stop-loss hit. 📉 Try again.")
                             
-        # NEW UPDATE: Google Form Onboarding Link 📝
+        # Google Form Onboarding Link 📝 (Color updated to match the clean theme!)
         st.markdown("<br>", unsafe_allow_html=True)
         form_url = "https://forms.google.com/your-form-link-here" # REPLACE WITH YOUR GOOGLE FORM URL!
-        st.markdown(f"<p style='text-align: center;'><a href='{form_url}' target='_blank' style='color: #4CAF50; text-decoration: none; font-weight: bold;'>🆕 Not in the syndicate yet? Submit your KYC & Apply Here! 📝</a></p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: center;'><a href='{form_url}' target='_blank' style='color: #0284c7; text-decoration: none; font-weight: bold;'>🆕 Not in the syndicate yet? Submit your KYC & Apply Here! 📝</a></p>", unsafe_allow_html=True)
 
 # --- 2. ADMIN DASHBOARD (GOD MODE) ---
 elif st.session_state.current_user['role'] == 'admin':
@@ -392,7 +404,7 @@ elif st.session_state.current_user['role'] == 'employee':
     
     st.sidebar.write("---")
     
-    # NEW UPDATE: Help/Complaints SOS WhatsApp Button 🚨
+    # Help/Complaints SOS WhatsApp Button 🚨
     st.sidebar.subheader("🛟 SOS / HQ Support")
     st.sidebar.caption("Got margin called? Need backup? Send a signal to the boss.")
     
@@ -436,4 +448,43 @@ elif st.session_state.current_user['role'] == 'employee':
         st.rerun()
     
     if my_tasks.empty:
-        st.info("No tasks assigned. You're officially off the clock. Go study some clinical")
+        st.info("No tasks assigned. You're officially off the clock. Go study some clinical meds or chart EUR/USD. 📉")
+    else:
+        for i, task in my_tasks.iterrows():
+            if pd.isna(task.get('title')): continue
+            
+            with st.container(border=True):
+                colA, colB = st.columns([3, 1])
+                with colA:
+                    st.markdown(f"### {task['title']}")
+                    date_str = task.get('date_assigned', 'Unknown Date')
+                    due_str = task.get('due_date', 'N/A')
+                    payout_val = task.get('payout', float(task['hours']) * float(task['rate']))
+                    st.caption(f"🕒 Assigned: {date_str} | 🎯 Due: {due_str} | Allocated: {task['hours']} hrs @ Ksh {task['rate']}/hr  => **Target TP: Ksh {payout_val}**")
+
+                with colB:
+                    if task['status'] == 'Pending':
+                        if st.button("Start Gig 🏃", key=f"start_{task['id']}", type="secondary"):
+                            tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'In Progress'
+                            with st.spinner("Locking in entry..."):
+                                save_tasks(tasks_df)
+                            st.rerun()
+                    elif task['status'] == 'In Progress':
+                        if st.button("Mark Done ✔️", key=f"done_{task['id']}", type="primary"):
+                            # The moment the TP hits, log the exact Kisumu time ⏱️
+                            tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Completed'
+                            tasks_df.loc[tasks_df['id'] == task['id'], 'time_marked_done'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            with st.spinner("Securing profits and logging the timestamp..."):
+                                save_tasks(tasks_df)
+                            st.rerun()
+                        if st.button("Absconded 🏃‍♂️💨", key=f"abscond_{task['id']}"):
+                            tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Absconded'
+                            with st.spinner("Blowing the account..."):
+                                save_tasks(tasks_df)
+                            st.rerun()
+                    elif task['status'] == 'Completed':
+                        st.warning("Awaiting Funds ⏳")
+                    elif task['status'] == 'Paid':
+                        st.success("Paid ✅")
+                    elif task['status'] == 'Absconded':
+                        st.error("Account Blown 🚩")
