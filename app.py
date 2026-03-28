@@ -5,6 +5,7 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 import traceback
+import urllib.parse # Added to encode the WhatsApp URL 🚀
 
 # --- CONFIG & SECRETS SETUP ---
 st.set_page_config(page_title="SSS Portal OS", layout="wide", page_icon="✨")
@@ -12,8 +13,9 @@ st.set_page_config(page_title="SSS Portal OS", layout="wide", page_icon="✨")
 ADMIN_USER = "admin"
 ADMIN_PASS = "admin@SSS"
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1lwK7P0Ul32suA1tOJMwrvPwawkMcVXIz5zNECVeUtfQ/edit?usp=sharing"
+SUPPORT_NUMBER = "254733084376"
 
-# --- 🛑 CSS INJECTION ENGINE (DYNAMIC BACKGROUNDS - SKY BLUE/WHITE/GRAY THEME) 🛑 ---
+# --- 🛑 CSS INJECTION ENGINE (DYNAMIC BACKGROUNDS) 🛑 ---
 def inject_custom_bg(role):
     if role == 'admin':
         # Admin Theme - Premium Sky Blue & Gray
@@ -85,19 +87,26 @@ def get_worksheets():
     def get_or_create(title, headers):
         try:
             ws = workbook.worksheet(title)
+            # Patch missing columns for legacy sheets so it doesn't gap down on open
+            existing_headers = ws.row_values(1)
+            missing = [h for h in headers if h not in existing_headers]
+            if missing:
+                ws.update(f"{gspread.utils.rowcol_to_a1(1, len(existing_headers)+1)}", [missing])
         except gspread.exceptions.WorksheetNotFound:
             ws = workbook.add_worksheet(title=title, rows="1000", cols="20")
             ws.append_row(headers)
         return ws
 
-    emps_ws = get_or_create("Employees", ["id", "name", "username", "password"])
-    tasks_ws = get_or_create("Tasks", ["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout"])
+    # Updated with phone numbers for the bot! 🤖
+    emps_ws = get_or_create("Employees", ["id", "name", "username", "password", "phone"])
+    # Updated with notification tracking for the bot AND cancel reasons! 🤖
+    tasks_ws = get_or_create("Tasks", ["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout", "msg_allocated", "msg_night_before", "msg_1hr_before", "msg_late", "cancel_reason"])
     settings_ws = get_or_create("Settings", ["setting_key", "setting_value"])
     
     # Initialize default admins if Employees is empty
     if not emps_ws.get_all_records():
-        emps_ws.append_row(["emp1", "Wanjiku (Nanny Pro)", "wanjiku", "password123"])
-        emps_ws.append_row(["emp2", "Ochieng (Deep Cleaner)", "ochieng", "password123"])
+        emps_ws.append_row(["emp1", "Wanjiku (Nanny Pro)", "wanjiku", "password123", "254700000000"])
+        emps_ws.append_row(["emp2", "Ochieng (Deep Cleaner)", "ochieng", "password123", "254700000000"])
         
     return workbook, emps_ws, tasks_ws, settings_ws
 
@@ -111,6 +120,7 @@ def fetch_portal_data():
         emps_df['id'] = emps_df['id'].astype(str)
         emps_df['username'] = emps_df['username'].astype(str)
         emps_df['password'] = emps_df['password'].astype(str)
+        if 'phone' not in emps_df.columns: emps_df['phone'] = ""
 
     tasks_records = tasks_ws.get_all_records()
     if tasks_records:
@@ -122,8 +132,12 @@ def fetch_portal_data():
         if 'due_date' not in tasks_df.columns: tasks_df['due_date'] = ""
         if 'time_marked_done' not in tasks_df.columns: tasks_df['time_marked_done'] = ""
         if 'payout' not in tasks_df.columns: tasks_df['payout'] = tasks_df['hours'] * tasks_df['rate']
+        
+        # Guard clauses for new bot message tracking & cancel reason
+        for col in ['msg_allocated', 'msg_night_before', 'msg_1hr_before', 'msg_late', 'cancel_reason']:
+            if col not in tasks_df.columns: tasks_df[col] = ""
     else:
-        tasks_df = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout"])
+        tasks_df = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout", "msg_allocated", "msg_night_before", "msg_1hr_before", "msg_late", "cancel_reason"])
         
     settings_df = pd.DataFrame(settings_ws.get_all_records())
     
@@ -239,9 +253,10 @@ elif st.session_state.current_user['role'] == 'admin':
         new_emp_name = st.text_input("Full Name", placeholder="e.g. John Doe")
         new_emp_user = st.text_input("Username", placeholder="e.g. johndoe99")
         new_emp_pass = st.text_input("Password", type="password", placeholder="Assign a password")
+        new_emp_phone = st.text_input("Phone Number", placeholder="e.g. 2547XXXXXXXX")
         
         if st.form_submit_button("Add Employee 🤝"):
-            if new_emp_name and new_emp_user and new_emp_pass:
+            if new_emp_name and new_emp_user and new_emp_pass and new_emp_phone:
                 if not emps_df.empty and new_emp_user in emps_df['username'].values:
                     st.error("Username already taken! Please choose another one.")
                 else:
@@ -250,7 +265,8 @@ elif st.session_state.current_user['role'] == 'admin':
                         "id": new_id, 
                         "name": new_emp_name, 
                         "username": new_emp_user, 
-                        "password": new_emp_pass
+                        "password": new_emp_pass,
+                        "phone": new_emp_phone
                     }])
                     emps_df = pd.concat([emps_df, new_row], ignore_index=True)
                     with st.spinner("Saving data securely..."):
@@ -322,7 +338,11 @@ elif st.session_state.current_user['role'] == 'admin':
                                 "date_assigned": exact_time_str,
                                 "due_date": final_due,
                                 "time_marked_done": "", 
-                                "payout": payout_val
+                                "payout": payout_val,
+                                "msg_allocated": "", 
+                                "msg_night_before": "", 
+                                "msg_1hr_before": "", 
+                                "msg_late": ""
                             })
                         
                         new_df = pd.DataFrame(new_records)
@@ -399,10 +419,8 @@ elif st.session_state.current_user['role'] == 'employee':
     st.sidebar.subheader("🛟 Help & Support")
     st.sidebar.caption("Need assistance? Contact support.")
     
-    # REPLACE WITH YOUR ACTUAL WHATSAPP NUMBER
-    whatsapp_number = "254700000000" 
     whatsapp_msg = "Hello! I need assistance regarding the SSS portal:%20"
-    wa_url = f"https://wa.me/{whatsapp_number}?text={whatsapp_msg}"
+    wa_url = f"https://wa.me/{SUPPORT_NUMBER}?text={whatsapp_msg}"
     st.sidebar.link_button("💬 Contact Administrator", wa_url, use_container_width=True)
     
     st.sidebar.write("---")
@@ -460,6 +478,23 @@ elif st.session_state.current_user['role'] == 'employee':
                             with st.spinner("Updating status..."):
                                 save_tasks(tasks_df)
                             st.rerun()
+                            
+                        # The "Paper Hands" Exit Strategy 📉
+                        with st.expander("I won't be around 🚫"):
+                            st.caption("Dropping the bag? Let the boss know why.")
+                            reason = st.text_area("Reason:", key=f"reason_{task['id']}")
+                            if st.button("Cancel Task 🚩", key=f"cancel_btn_{task['id']}", type="primary"):
+                                if not reason.strip():
+                                    st.error("Bro, enter a reason! Can't just hit stop-loss quietly. 🛑")
+                                else:
+                                    tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Cancelled'
+                                    tasks_df.loc[tasks_df['id'] == task['id'], 'cancel_reason'] = reason
+                                    with st.spinner("Liquidating position..."):
+                                        save_tasks(tasks_df)
+                                    # Save to session state so we can show the WA link immediately
+                                    st.session_state[f"wa_reason_{task['id']}"] = reason
+                                    st.rerun()
+
                     elif task['status'] == 'In Progress':
                         if st.button("Mark Done ✔️", key=f"done_{task['id']}", type="primary"):
                             tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Completed'
@@ -476,5 +511,12 @@ elif st.session_state.current_user['role'] == 'employee':
                         st.warning("Awaiting Funds ⏳")
                     elif task['status'] == 'Paid':
                         st.success("Paid ✅")
-                    elif task['status'] in ['Cancelled', 'Absconded']: # Catch legacy Absconded data too!
+                    elif task['status'] in ['Cancelled', 'Absconded']: # Catching legacy Absconded data too!
                         st.error("Task Cancelled 🚩")
+                        
+                        # Generate the WhatsApp link so they can message the Admin 📲
+                        reason_text = st.session_state.get(f"wa_reason_{task['id']}", task.get('cancel_reason', ''))
+                        if reason_text:
+                            encoded_msg = urllib.parse.quote(f"🚨 *Task Cancelled!*\n*Worker:* {user_name}\n*Task:* {task['title']}\n*Reason:* {reason_text}")
+                            wa_url = f"https://wa.me/{SUPPORT_NUMBER}?text={encoded_msg}"
+                            st.link_button("📲 Send Reason to Admin", wa_url)
