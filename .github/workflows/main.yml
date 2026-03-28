@@ -30,4 +30,4 @@ jobs:
           GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
           # WA_TOKEN: ${{ secrets.WA_TOKEN }}
           # WA_PHONE_ID: ${{ secrets.WA_PHONE_ID }}
-        run: python bot.py
+        run: python WA_notify.py
