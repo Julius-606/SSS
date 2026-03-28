@@ -99,8 +99,8 @@ def get_worksheets():
 
     # Updated with phone numbers for the bot! 🤖
     emps_ws = get_or_create("Employees", ["id", "name", "username", "password", "phone"])
-    # Updated with notification tracking for the bot AND cancel reasons! 🤖
-    tasks_ws = get_or_create("Tasks", ["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout", "msg_allocated", "msg_night_before", "msg_1hr_before", "msg_late", "cancel_reason"])
+    # Updated with instructions column! 🚀
+    tasks_ws = get_or_create("Tasks", ["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout", "msg_allocated", "msg_night_before", "msg_1hr_before", "msg_late", "cancel_reason", "instructions"])
     settings_ws = get_or_create("Settings", ["setting_key", "setting_value"])
     
     # Initialize default admins if Employees is empty
@@ -133,11 +133,11 @@ def fetch_portal_data():
         if 'time_marked_done' not in tasks_df.columns: tasks_df['time_marked_done'] = ""
         if 'payout' not in tasks_df.columns: tasks_df['payout'] = tasks_df['hours'] * tasks_df['rate']
         
-        # Guard clauses for new bot message tracking & cancel reason
-        for col in ['msg_allocated', 'msg_night_before', 'msg_1hr_before', 'msg_late', 'cancel_reason']:
+        # Guard clauses for new bot message tracking, cancel reason & instructions!
+        for col in ['msg_allocated', 'msg_night_before', 'msg_1hr_before', 'msg_late', 'cancel_reason', 'instructions']:
             if col not in tasks_df.columns: tasks_df[col] = ""
     else:
-        tasks_df = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout", "msg_allocated", "msg_night_before", "msg_1hr_before", "msg_late", "cancel_reason"])
+        tasks_df = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout", "msg_allocated", "msg_night_before", "msg_1hr_before", "msg_late", "cancel_reason", "instructions"])
         
     settings_df = pd.DataFrame(settings_ws.get_all_records())
     
@@ -304,6 +304,9 @@ elif st.session_state.current_user['role'] == 'admin':
             with st.form("dispatch_form"):
                 final_title = st.text_input("Task Title")
                 
+                # NEW FEATURE: Further Instructions 📝
+                instructions = st.text_area("Further Instructions (Optional)", placeholder="E.g., Make sure to lock the door, don't forget the keys...")
+                
                 emp_options = dict(zip(emps_df['name'], emps_df['id'])) if not emps_df.empty else {}
                 selected_squad_names = st.multiselect("👥 Select Employees", list(emp_options.keys()))
                 
@@ -342,7 +345,9 @@ elif st.session_state.current_user['role'] == 'admin':
                                 "msg_allocated": "", 
                                 "msg_night_before": "", 
                                 "msg_1hr_before": "", 
-                                "msg_late": ""
+                                "msg_late": "",
+                                "cancel_reason": "",
+                                "instructions": instructions # Log the instructions to the bag 🎒
                             })
                         
                         new_df = pd.DataFrame(new_records)
@@ -466,6 +471,11 @@ elif st.session_state.current_user['role'] == 'employee':
                 colA, colB = st.columns([3, 1])
                 with colA:
                     st.markdown(f"### {task['title']}")
+                    
+                    # Display the new instructions if the Admin left some alpha 🧠
+                    if task.get('instructions'):
+                        st.info(f"**📝 Instructions:**\n\n{task['instructions']}")
+
                     date_str = task.get('date_assigned', 'Unknown Date')
                     due_str = task.get('due_date', 'N/A')
                     payout_val = task.get('payout', float(task['hours']) * float(task['rate']))
