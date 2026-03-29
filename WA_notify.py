@@ -38,7 +38,7 @@ def send_whatsapp_msg(phone, message):
     response = requests.post(url, headers=headers, json=payload)
     return response.status_code == 200
     
-    Returning true for simulation so we know the logic holds up!
+    #Returning true for simulation so we know the logic holds up!
     return True
 
 def main():
