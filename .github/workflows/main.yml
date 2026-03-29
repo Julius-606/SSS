@@ -28,6 +28,6 @@ jobs:
         env:
           # Securing the bag with encrypted secrets 🔐
           GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-          # WA_TOKEN: ${{ secrets.WA_TOKEN }}
-          # WA_PHONE_ID: ${{ secrets.WA_PHONE_ID }}
+          WA_TOKEN: ${{ secrets.WA_TOKEN }}
+          WA_PHONE_ID: ${{ secrets.WA_PHONE_ID }}
         run: python WA_notify.py
