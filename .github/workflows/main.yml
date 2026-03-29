@@ -1,11 +1,15 @@
-name: SSS WhatsApp Algorithmic Bot
+name: SSS WhatsApp Notification Service
 
 on:
   schedule:
-    # Runs at minute 0 past every hour. 1H timeframe secured! 🕯️📊
-    - cron: '0 * * * *'
+    # 🧠 SCHEDULING LOGIC: 
+    # Kisumu is EAT (UTC+3). 
+    # To optimize compute usage during inactive hours,
+    # the workflow operates between 6 AM and 10 PM EAT.
+    # 6 AM EAT = 3 AM UTC. 10 PM EAT = 7 PM UTC.
+    - cron: '0 3-19 * * *'
   workflow_dispatch: 
-    # Manual override in case you need to execute a market order!
+    # Manual override for emergency system updates.
 
 jobs:
   run-bot:
@@ -24,9 +28,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install gspread pandas pytz requests
 
-      - name: Run the Bot Script 🚀
+      - name: Run the Notification Service 🚀
         env:
-          # Securing the bag with encrypted secrets 🔐
+          # Secure credentials management 🔐
           GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
           WA_TOKEN: ${{ secrets.WA_TOKEN }}
           WA_PHONE_ID: ${{ secrets.WA_PHONE_ID }}

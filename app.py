@@ -1,19 +1,21 @@
 import streamlit as st
 import pandas as pd
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz 
 import gspread
 from google.oauth2.service_account import Credentials
 import traceback
-import urllib.parse # Added to encode the WhatsApp URL 🚀
+import urllib.parse
 
 # --- CONFIG & SECRETS SETUP ---
-st.set_page_config(page_title="SSS Portal OS", layout="wide", page_icon="✨")
+st.set_page_config(page_title="SSS Portal OS", layout="wide", page_icon="✨", initial_sidebar_state="collapsed")
 
 ADMIN_USER = "admin"
 ADMIN_PASS = "admin@SSS"
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1lwK7P0Ul32suA1tOJMwrvPwawkMcVXIz5zNECVeUtfQ/edit?usp=sharing"
-SUPPORT_NUMBER = "254733084376"
+SUPPORT_NUMBER = "254799084376" 
+KISUMU_TZ = pytz.timezone('Africa/Nairobi') # East Africa Time (EAT) 
 
 # --- 🛑 CSS INJECTION ENGINE (DYNAMIC BACKGROUNDS) 🛑 ---
 def inject_custom_bg(role):
@@ -25,7 +27,6 @@ def inject_custom_bg(role):
             background: linear-gradient(135deg, #e0f2fe 0%, #ffffff 50%, #e5e7eb 100%);
             color: #1e293b;
         }
-        /* Clean dark slate gray text */
         h1, h2, h3, h4, p, span, div {
             color: #334155;
         }
@@ -87,7 +88,6 @@ def get_worksheets():
     def get_or_create(title, headers):
         try:
             ws = workbook.worksheet(title)
-            # Patch missing columns for legacy sheets so it doesn't gap down on open
             existing_headers = ws.row_values(1)
             missing = [h for h in headers if h not in existing_headers]
             if missing:
@@ -97,13 +97,10 @@ def get_worksheets():
             ws.append_row(headers)
         return ws
 
-    # Updated with phone numbers for the bot! 🤖
     emps_ws = get_or_create("Employees", ["id", "name", "username", "password", "phone"])
-    # Updated with instructions column! 🚀
-    tasks_ws = get_or_create("Tasks", ["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout", "msg_allocated", "msg_night_before", "msg_1hr_before", "msg_late", "cancel_reason", "instructions"])
+    tasks_ws = get_or_create("Tasks", ["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout", "msg_allocated", "msg_night_before", "msg_1hr_before", "msg_late", "cancel_reason", "instructions", "msg_admin_cancelled"])
     settings_ws = get_or_create("Settings", ["setting_key", "setting_value"])
     
-    # Initialize default admins if Employees is empty
     if not emps_ws.get_all_records():
         emps_ws.append_row(["emp1", "Wanjiku (Nanny Pro)", "wanjiku", "password123", "254700000000"])
         emps_ws.append_row(["emp2", "Ochieng (Deep Cleaner)", "ochieng", "password123", "254700000000"])
@@ -128,16 +125,14 @@ def fetch_portal_data():
         tasks_df['hours'] = pd.to_numeric(tasks_df['hours'], errors='coerce')
         tasks_df['rate'] = pd.to_numeric(tasks_df['rate'], errors='coerce')
         
-        # Guard clause for legacy sheet compatibility
         if 'due_date' not in tasks_df.columns: tasks_df['due_date'] = ""
         if 'time_marked_done' not in tasks_df.columns: tasks_df['time_marked_done'] = ""
         if 'payout' not in tasks_df.columns: tasks_df['payout'] = tasks_df['hours'] * tasks_df['rate']
         
-        # Guard clauses for new bot message tracking, cancel reason & instructions!
-        for col in ['msg_allocated', 'msg_night_before', 'msg_1hr_before', 'msg_late', 'cancel_reason', 'instructions']:
+        for col in ['msg_allocated', 'msg_night_before', 'msg_1hr_before', 'msg_late', 'cancel_reason', 'instructions', 'msg_admin_cancelled']:
             if col not in tasks_df.columns: tasks_df[col] = ""
     else:
-        tasks_df = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout", "msg_allocated", "msg_night_before", "msg_1hr_before", "msg_late", "cancel_reason", "instructions"])
+        tasks_df = pd.DataFrame(columns=["id", "title", "employee_Id", "hours", "rate", "status", "date_assigned", "due_date", "time_marked_done", "payout", "msg_allocated", "msg_night_before", "msg_1hr_before", "msg_late", "cancel_reason", "instructions", "msg_admin_cancelled"])
         
     settings_df = pd.DataFrame(settings_ws.get_all_records())
     
@@ -147,7 +142,7 @@ def fetch_portal_data():
 emps_df, tasks_df, settings_df = fetch_portal_data()
 
 # --- THE MONTHLY AUTO-ARCHIVE ENGINE ---
-CURRENT_MONTH = datetime.now().strftime("%Y-%m")
+CURRENT_MONTH = datetime.now(KISUMU_TZ).strftime("%Y-%m")
 
 if settings_df.empty or 'last_reset' not in settings_df['setting_key'].values:
     settings_ws.append_row(["last_reset", CURRENT_MONTH])
@@ -159,7 +154,8 @@ else:
 if last_reset != CURRENT_MONTH:
     try:
         if not tasks_df.empty:
-            active_statuses = ['Pending', 'In Progress', 'Completed']
+            # Added Confirmed to active statuses so they stay out of the archive
+            active_statuses = ['Pending', 'Confirmed', 'In Progress', 'Completed']
             keep_df = tasks_df[tasks_df['status'].isin(active_statuses)]
             archive_df = tasks_df[~tasks_df['status'].isin(active_statuses)]
             
@@ -172,11 +168,9 @@ if last_reset != CURRENT_MONTH:
                     archive_ws.append_row(list(archive_df.columns))
                 archive_ws.append_rows(archive_df.values.tolist())
             
-            # Save the active ones back
             tasks_ws.clear()
             tasks_ws.update([keep_df.columns.values.tolist()] + keep_df.fillna('').values.tolist())
         
-        # Update settings tracker
         cell = settings_ws.find("last_reset")
         settings_ws.update_cell(cell.row, cell.col + 1, CURRENT_MONTH)
         
@@ -238,7 +232,7 @@ if st.session_state.current_user is None:
                             st.error("Invalid credentials. Access Denied. 🛑 Please try again.")
                             
         st.markdown("<br>", unsafe_allow_html=True)
-        form_url = "https://forms.google.com/your-form-link-here" # REPLACE WITH YOUR GOOGLE FORM URL!
+        form_url = "https://forms.google.com/your-form-link-here" 
         st.markdown(f"<p style='text-align: center;'><a href='{form_url}' target='_blank' style='color: #0284c7; text-decoration: none; font-weight: bold;'>🆕 Not registered yet? Submit your application here! 📝</a></p>", unsafe_allow_html=True)
 
 # --- 2. ADMIN DASHBOARD ---
@@ -304,8 +298,7 @@ elif st.session_state.current_user['role'] == 'admin':
             with st.form("dispatch_form"):
                 final_title = st.text_input("Task Title")
                 
-                # NEW FEATURE: Further Instructions 📝
-                instructions = st.text_area("Further Instructions (Optional)", placeholder="E.g., Make sure to lock the door, don't forget the keys...")
+                instructions = st.text_area("Further Instructions (Optional)", placeholder="E.g., Ensure the front gate is secured...")
                 
                 emp_options = dict(zip(emps_df['name'], emps_df['id'])) if not emps_df.empty else {}
                 selected_squad_names = st.multiselect("👥 Select Employees", list(emp_options.keys()))
@@ -325,7 +318,7 @@ elif st.session_state.current_user['role'] == 'admin':
                         st.error("⚠️ Please select at least one employee.")
                     else:
                         new_records = []
-                        exact_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        exact_time_str = datetime.now(KISUMU_TZ).strftime("%Y-%m-%d %H:%M:%S")
                         final_due = f"{due_date} {due_time}"
                         payout_val = hours * rate
                         
@@ -347,7 +340,8 @@ elif st.session_state.current_user['role'] == 'admin':
                                 "msg_1hr_before": "", 
                                 "msg_late": "",
                                 "cancel_reason": "",
-                                "instructions": instructions # Log the instructions to the bag 🎒
+                                "instructions": instructions,
+                                "msg_admin_cancelled": ""
                             })
                         
                         new_df = pd.DataFrame(new_records)
@@ -361,7 +355,8 @@ elif st.session_state.current_user['role'] == 'admin':
     with col2:
         st.subheader("⚡ Active Tasks")
         if not tasks_df.empty:
-            active_tasks = tasks_df[tasks_df['status'].isin(['Pending', 'In Progress', 'Completed'])]
+            # 🧠 The admin dashboard tracks the 'Confirmed' liquidity pool right here!
+            active_tasks = tasks_df[tasks_df['status'].isin(['Pending', 'Confirmed', 'In Progress', 'Completed'])]
         else:
             active_tasks = pd.DataFrame()
             
@@ -384,6 +379,9 @@ elif st.session_state.current_user['role'] == 'admin':
                         
                         if task['status'] == 'Pending':
                             st.warning("Pending ⏳")
+                        elif task['status'] == 'Confirmed':
+                            # 🤝 Dropping that clear visual confirmation for the boss!
+                            st.success("Worker Confirmed 🤝")
                         elif task['status'] == 'In Progress':
                             st.info("In Progress 🏃")
                         elif task['status'] == 'Completed':
@@ -444,15 +442,15 @@ elif st.session_state.current_user['role'] == 'employee':
         tasks_df['employee_Id'] = tasks_df['employee_Id'].astype(str)
         my_tasks = tasks_df[tasks_df['employee_Id'] == user_id]
         total_earned = sum(float(t.get('payout', float(t['hours']) * float(t['rate']))) for _, t in my_tasks.iterrows() if t['status'] == 'Paid')
-        pending_bag = sum(float(t.get('payout', float(t['hours']) * float(t['rate']))) for _, t in my_tasks.iterrows() if t['status'] in ['Pending', 'In Progress', 'Completed'])
+        pending_balance = sum(float(t.get('payout', float(t['hours']) * float(t['rate']))) for _, t in my_tasks.iterrows() if t['status'] in ['Pending', 'Confirmed', 'In Progress', 'Completed'])
     else:
         my_tasks = pd.DataFrame()
         total_earned = 0
-        pending_bag = 0
+        pending_balance = 0
 
     c1, c2 = st.columns(2)
     c1.metric("💵 Total Earnings (Paid)", f"Ksh {total_earned}")
-    c2.metric("📊 Pending Balance", f"Ksh {pending_bag}")
+    c2.metric("📊 Pending Balance", f"Ksh {pending_balance}")
     
     st.write("---")
     st.subheader("💼 My Assigned Tasks")
@@ -472,7 +470,6 @@ elif st.session_state.current_user['role'] == 'employee':
                 with colA:
                     st.markdown(f"### {task['title']}")
                     
-                    # Display the new instructions if the Admin left some alpha 🧠
                     if task.get('instructions'):
                         st.info(f"**📝 Instructions:**\n\n{task['instructions']}")
 
@@ -482,34 +479,73 @@ elif st.session_state.current_user['role'] == 'employee':
                     st.caption(f"🕒 Assigned: {date_str} | 🎯 Due: {due_str} | Allocated: {task['hours']} hrs @ Ksh {task['rate']}/hr  => **Expected Payout: Ksh {payout_val}**")
 
                 with colB:
+                    # NEW FLOW: PENDING -> CONFIRMED
                     if task['status'] == 'Pending':
-                        if st.button("Start Task 🏃", key=f"start_{task['id']}", type="secondary"):
-                            tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'In Progress'
-                            with st.spinner("Updating status..."):
+                        if st.button("Confirm Availability ✅", key=f"confirm_{task['id']}", type="primary"):
+                            tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Confirmed'
+                            with st.spinner("Confirming your availability..."):
                                 save_tasks(tasks_df)
                             st.rerun()
                             
-                        # The "Paper Hands" Exit Strategy 📉
-                        with st.expander("I won't be around 🚫"):
-                            st.caption("Dropping the bag? Let the boss know why.")
-                            reason = st.text_area("Reason:", key=f"reason_{task['id']}")
-                            if st.button("Cancel Task 🚩", key=f"cancel_btn_{task['id']}", type="primary"):
+                        with st.expander("Decline Task ❌"):
+                            st.caption("Unable to take this task? Please provide a reason.")
+                            reason = st.text_area("Reason for declining:", key=f"reason_{task['id']}")
+                            if st.button("Submit Decline", key=f"cancel_btn_{task['id']}", type="primary"):
                                 if not reason.strip():
-                                    st.error("Bro, enter a reason! Can't just hit stop-loss quietly. 🛑")
+                                    st.error("Please provide a reason for declining. 🛑")
                                 else:
                                     tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Cancelled'
                                     tasks_df.loc[tasks_df['id'] == task['id'], 'cancel_reason'] = reason
-                                    with st.spinner("Liquidating position..."):
+                                    with st.spinner("Processing cancellation and notifying Admin..."):
                                         save_tasks(tasks_df)
-                                    # Save to session state so we can show the WA link immediately
+                                    st.session_state[f"wa_reason_{task['id']}"] = reason
+                                    st.rerun()
+                                    
+                    # CONFIRMED -> IN PROGRESS
+                    elif task['status'] == 'Confirmed':
+                        if st.button("Start Task 🏃", key=f"start_{task['id']}", type="secondary"):
+                            allowed_to_start = True
+                            if due_str:
+                                try:
+                                    task_due_time = KISUMU_TZ.localize(datetime.strptime(due_str, "%Y-%m-%d %H:%M:%S"))
+                                    now_eat = datetime.now(KISUMU_TZ)
+                                    time_diff = task_due_time - now_eat
+                                    
+                                    if time_diff > timedelta(hours=1):
+                                        allowed_to_start = False
+                                        wait_time = time_diff - timedelta(hours=1)
+                                        hours_wait = int(wait_time.total_seconds() // 3600)
+                                        mins_wait = int((wait_time.total_seconds() % 3600) // 60)
+                                        
+                                        st.error(f"🛑 **Action Denied:** You are attempting to start this task too early. System policy allows clocking in up to 1 hour before the scheduled start time. Please try again in {hours_wait}h {mins_wait}m.")
+                                except Exception as e:
+                                    pass 
+                            
+                            if allowed_to_start:
+                                tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'In Progress'
+                                with st.spinner("Clocking in... Status updated to In Progress 🚀"):
+                                    save_tasks(tasks_df)
+                                st.rerun()
+                            
+                        with st.expander("Cancel Confirmed Task 🚫"):
+                            st.caption("Unable to complete the task? Please provide a reason.")
+                            reason = st.text_area("Reason:", key=f"reason_{task['id']}")
+                            if st.button("Cancel Task 🚩", key=f"cancel_btn2_{task['id']}", type="primary"):
+                                if not reason.strip():
+                                    st.error("Please provide a reason for cancellation. 🛑")
+                                else:
+                                    tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Cancelled'
+                                    tasks_df.loc[tasks_df['id'] == task['id'], 'cancel_reason'] = reason
+                                    with st.spinner("Processing cancellation and notifying Admin..."):
+                                        save_tasks(tasks_df)
                                     st.session_state[f"wa_reason_{task['id']}"] = reason
                                     st.rerun()
 
                     elif task['status'] == 'In Progress':
                         if st.button("Mark Done ✔️", key=f"done_{task['id']}", type="primary"):
                             tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Completed'
-                            tasks_df.loc[tasks_df['id'] == task['id'], 'time_marked_done'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            with st.spinner("Marking as complete and logging timestamp..."):
+                            tasks_df.loc[tasks_df['id'] == task['id'], 'time_marked_done'] = datetime.now(KISUMU_TZ).strftime("%Y-%m-%d %H:%M:%S")
+                            with st.spinner("Marking as completed and saving timestamp..."):
                                 save_tasks(tasks_df)
                             st.rerun()
                         if st.button("Cancel Task 🚩", key=f"abscond_{task['id']}"):
@@ -521,12 +557,11 @@ elif st.session_state.current_user['role'] == 'employee':
                         st.warning("Awaiting Funds ⏳")
                     elif task['status'] == 'Paid':
                         st.success("Paid ✅")
-                    elif task['status'] in ['Cancelled', 'Absconded']: # Catching legacy Absconded data too!
+                    elif task['status'] in ['Cancelled', 'Absconded']:
                         st.error("Task Cancelled 🚩")
                         
-                        # Generate the WhatsApp link so they can message the Admin 📲
                         reason_text = st.session_state.get(f"wa_reason_{task['id']}", task.get('cancel_reason', ''))
                         if reason_text:
                             encoded_msg = urllib.parse.quote(f"🚨 *Task Cancelled!*\n*Worker:* {user_name}\n*Task:* {task['title']}\n*Reason:* {reason_text}")
                             wa_url = f"https://wa.me/{SUPPORT_NUMBER}?text={encoded_msg}"
-                            st.link_button("📲 Send Reason to Admin", wa_url)
+                            st.link_button("📲 Send Manual Follow-up to Admin", wa_url)
