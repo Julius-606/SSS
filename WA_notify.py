@@ -13,17 +13,24 @@ KISUMU_TZ = pytz.timezone('Africa/Nairobi') # East Africa Time (EAT)
 def send_whatsapp_msg(phone, message):
     """
     This is where you plug in your WhatsApp API. 
-    Using Meta's Official Cloud API as a placeholder.
+    Using Meta's Official Cloud API to execute trades (messages).
     """
     if not phone or phone.lower() == 'nan':
         print("No phone number to send to.")
         return False
 
-    print(f"📱 Sending to {phone}: {message}")
+    # Just printing the first 30 chars so the logs aren't too cluttered
+    print(f"📱 Attempting to send to {phone}: {message[:30]}...")
     
-    # --- META WHATSAPP API LOGIC ---
+    # --- META WHATSAPP API LOGIC (FULLY LIVE 🚀) ---
     ACCESS_TOKEN = os.getenv("WA_TOKEN")
     PHONE_ID = os.getenv("WA_PHONE_ID")
+    
+    # Quick risk management check before we enter the market
+    if not ACCESS_TOKEN or not PHONE_ID:
+        print("❌ API ERROR: Missing WA_TOKEN or WA_PHONE_ID in GitHub secrets! You're trading with zero margin!")
+        return False
+
     url = f"https://graph.facebook.com/v17.0/{PHONE_ID}/messages"
     headers = {
         "Authorization": f"Bearer {ACCESS_TOKEN}",
@@ -35,11 +42,22 @@ def send_whatsapp_msg(phone, message):
         "type": "text",
         "text": {"body": message}
     }
-    response = requests.post(url, headers=headers, json=payload)
-    return response.status_code == 200
     
-    #Returning true for simulation so we know the logic holds up!
-    return True
+    try:
+        # Executing the market order!
+        response = requests.post(url, headers=headers, json=payload)
+        
+        # 🛑 NEW DEBUG LOGIC: Print the exact error if Meta rejects the liquidity!
+        if response.status_code != 200:
+            print(f"❌ META API ERROR (Status {response.status_code}): {response.text}")
+            return False
+            
+        print("✅ Message successfully executed to the market!")
+        return True
+    
+    except Exception as e:
+        print(f"❌ FATAL ERROR executing trade (message request failed): {e}")
+        return False
 
 def main():
     print("🤖 Waking up... Initializing SSS Notification Bot (Checking the Sheet)")
@@ -47,24 +65,28 @@ def main():
     # 1. Connect to Sheets using env vars set by GitHub Actions
     creds_json = os.getenv("GCP_SERVICE_ACCOUNT")
     if not creds_json:
-        print("🚨 System Error! No GCP credentials found.")
+        print("🚨 System Error! No GCP credentials found. Account blown.")
         return
 
-    creds_dict = json.loads(creds_json)
-    client = gspread.service_account_from_dict(creds_dict)
-    workbook = client.open_by_url(SHEET_URL)
-    
-    tasks_ws = workbook.worksheet("Tasks")
-    emps_ws = workbook.worksheet("Employees")
-    
-    tasks_df = pd.DataFrame(tasks_ws.get_all_records())
-    emps_df = pd.DataFrame(emps_ws.get_all_records())
+    try:
+        creds_dict = json.loads(creds_json)
+        client = gspread.service_account_from_dict(creds_dict)
+        workbook = client.open_by_url(SHEET_URL)
+        
+        tasks_ws = workbook.worksheet("Tasks")
+        emps_ws = workbook.worksheet("Employees")
+        
+        tasks_df = pd.DataFrame(tasks_ws.get_all_records())
+        emps_df = pd.DataFrame(emps_ws.get_all_records())
+    except Exception as e:
+        print(f"🚨 Stop-loss hit! Failed to load Google Sheets. Error: {e}")
+        return
     
     if tasks_df.empty:
-        print("No active tasks found. System idle.")
+        print("No active tasks found. Market is consolidating. System idle.")
         return
 
-    # Force to strings so pandas doesn't mess up the IDs
+    # Force to strings so pandas doesn't mess up the IDs and hit a syntax error
     tasks_df['employee_Id'] = tasks_df['employee_Id'].astype(str)
     emps_df['id'] = emps_df['id'].astype(str)
     emps_df['phone'] = emps_df['phone'].astype(str)
@@ -129,7 +151,7 @@ def main():
                         updates_made = True
 
             except ValueError:
-                pass # Date wasn't formatted correctly, ignore
+                pass # Date wasn't formatted correctly, ignore and hold position
 
     # 3. Update Google Sheets if we sent messages
     if updates_made:
