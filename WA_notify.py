@@ -22,23 +22,23 @@ def send_whatsapp_msg(phone, message):
     print(f"📱 Sending to {phone}: {message}")
     
     # --- META WHATSAPP API LOGIC ---
-    # ACCESS_TOKEN = os.getenv("WA_TOKEN")
-    # PHONE_ID = os.getenv("WA_PHONE_ID")
-    # url = f"https://graph.facebook.com/v17.0/{PHONE_ID}/messages"
-    # headers = {
-    #     "Authorization": f"Bearer {ACCESS_TOKEN}",
-    #     "Content-Type": "application/json"
-    # }
-    # payload = {
-    #     "messaging_product": "whatsapp",
-    #     "to": phone,
-    #     "type": "text",
-    #     "text": {"body": message}
-    # }
-    # response = requests.post(url, headers=headers, json=payload)
-    # return response.status_code == 200
+    ACCESS_TOKEN = os.getenv("WA_TOKEN")
+    PHONE_ID = os.getenv("WA_PHONE_ID")
+    url = f"https://graph.facebook.com/v17.0/{PHONE_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "text",
+        "text": {"body": message}
+    }
+    response = requests.post(url, headers=headers, json=payload)
+    return response.status_code == 200
     
-    # Returning true for simulation so we know the logic holds up!
+    Returning true for simulation so we know the logic holds up!
     return True
 
 def main():
