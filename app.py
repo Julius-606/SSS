@@ -73,7 +73,17 @@ def get_worksheets():
             existing_headers = ws.row_values(1)
             missing = [h for h in headers if h not in existing_headers]
             if missing:
-                ws.update(f"{gspread.utils.rowcol_to_a1(1, len(existing_headers)+1)}", [missing])
+                # 🛑 FIX: Grid Limit Margin Call
+                # Expand columns if necessary so we don't get liquidated by Google's API limit
+                if len(existing_headers) + len(missing) > ws.col_count:
+                    ws.add_cols(len(missing) + 5) # Buffer zone
+                    
+                # 🛑 FIX: Deprecation Warning
+                # Passing values and range_name as explicit keyword arguments
+                ws.update(
+                    values=[missing], 
+                    range_name=f"{gspread.utils.rowcol_to_a1(1, len(existing_headers)+1)}"
+                )
         except gspread.exceptions.WorksheetNotFound:
             ws = workbook.add_worksheet(title=title, rows="1000", cols="30")
             ws.append_row(headers)
@@ -158,7 +168,7 @@ if last_reset != CURRENT_MONTH:
                 archive_ws.append_rows(archive_df.values.tolist())
             
             tasks_ws.clear()
-            tasks_ws.update([keep_df.columns.values.tolist()] + keep_df.fillna('').values.tolist())
+            tasks_ws.update(values=[keep_df.columns.values.tolist()] + keep_df.fillna('').values.tolist(), range_name="A1")
         
         cell = settings_ws.find("last_reset")
         settings_ws.update_cell(cell.row, cell.col + 1, CURRENT_MONTH)
@@ -171,18 +181,28 @@ if last_reset != CURRENT_MONTH:
 
 # --- WRITE FUNCTIONS ---
 def save_tasks(df):
+    data = [df.columns.values.tolist()] + df.fillna('').values.tolist()
+    # Risk Management: Ensure grid space exists before dumping data
+    if len(data) > tasks_ws.row_count: 
+        tasks_ws.add_rows(len(data) - tasks_ws.row_count + 100)
     tasks_ws.clear()
-    tasks_ws.update([df.columns.values.tolist()] + df.fillna('').values.tolist())
+    tasks_ws.update(values=data, range_name="A1")
     fetch_portal_data.clear() 
 
 def save_emps(df):
+    data = [df.columns.values.tolist()] + df.fillna('').values.tolist()
+    if len(data) > emps_ws.row_count: 
+        emps_ws.add_rows(len(data) - emps_ws.row_count + 100)
     emps_ws.clear()
-    emps_ws.update([df.columns.values.tolist()] + df.fillna('').values.tolist())
+    emps_ws.update(values=data, range_name="A1")
     fetch_portal_data.clear() 
 
 def save_acct(df):
+    data = [df.columns.values.tolist()] + df.fillna('').values.tolist()
+    if len(data) > acct_ws.row_count: 
+        acct_ws.add_rows(len(data) - acct_ws.row_count + 100)
     acct_ws.clear()
-    acct_ws.update([df.columns.values.tolist()] + df.fillna('').values.tolist())
+    acct_ws.update(values=data, range_name="A1")
     fetch_portal_data.clear()
 
 if 'current_user' not in st.session_state:
@@ -247,7 +267,6 @@ elif st.session_state.current_user['role'] == 'admin':
                         skills_str = ", ".join(new_emp_skills) if new_emp_skills else "General"
                         new_row = pd.DataFrame([{"id": new_id, "name": new_emp_name, "username": new_emp_user, "password": new_emp_pass, "phone": new_emp_phone, "skills": skills_str, "points": 0}])
                         
-                        # Fix applied here: Clean local variable creation, zero global scopes ✅
                         updated_emps_df = pd.concat([emps_df, new_row], ignore_index=True)
                         save_emps(updated_emps_df)
                         
@@ -379,7 +398,6 @@ elif st.session_state.current_user['role'] == 'admin':
                                 
                                 new_df = pd.DataFrame(new_records)
                                 
-                                # Fix applied here: Clean local variable creation, zero global scopes ✅
                                 updated_tasks_df = pd.concat([tasks_df, new_df], ignore_index=True)
                                 save_tasks(updated_tasks_df)
                                 
@@ -485,7 +503,6 @@ elif st.session_state.current_user['role'] == 'admin':
                                         for key in ['msg_allocated', 'msg_night_before', 'msg_1hr_before', 'msg_late', 'msg_admin_cancelled', 'msg_admin_completed', 'time_marked_done', 'rating']:
                                             next_task[key] = ""
                                         
-                                        # Fix applied here: Clean local variable creation, zero global scopes ✅
                                         updated_tasks_df = pd.concat([tasks_df, pd.DataFrame([next_task])], ignore_index=True)
                                         save_tasks(updated_tasks_df)
 
@@ -567,7 +584,6 @@ elif st.session_state.current_user['role'] == 'admin':
                                 "status": "Cleared"
                             }])
                             
-                            # Fix applied here: Clean local variable creation, zero global scopes ✅
                             updated_acct_df = pd.concat([acct_df, new_tx], ignore_index=True)
                             save_acct(updated_acct_df)
                             
