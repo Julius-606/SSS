@@ -246,9 +246,11 @@ elif st.session_state.current_user['role'] == 'admin':
                         new_id = f"emp{int(time.time())}"
                         skills_str = ", ".join(new_emp_skills) if new_emp_skills else "General"
                         new_row = pd.DataFrame([{"id": new_id, "name": new_emp_name, "username": new_emp_user, "password": new_emp_pass, "phone": new_emp_phone, "skills": skills_str, "points": 0}])
-                        global emps_df
-                        emps_df = pd.concat([emps_df, new_row], ignore_index=True)
-                        save_emps(emps_df)
+                        
+                        # Fix applied here: Clean local variable creation, zero global scopes ✅
+                        updated_emps_df = pd.concat([emps_df, new_row], ignore_index=True)
+                        save_emps(updated_emps_df)
+                        
                         st.success("Employee added successfully! Big W.")
                         st.rerun()
                 else:
@@ -375,10 +377,12 @@ elif st.session_state.current_user['role'] == 'admin':
                                         "recurrence_pattern": recurrence_pattern, "rating": "", "msg_admin_completed": ""
                                     })
                                 
-                                global tasks_df
                                 new_df = pd.DataFrame(new_records)
-                                tasks_df = pd.concat([tasks_df, new_df], ignore_index=True)
-                                save_tasks(tasks_df)
+                                
+                                # Fix applied here: Clean local variable creation, zero global scopes ✅
+                                updated_tasks_df = pd.concat([tasks_df, new_df], ignore_index=True)
+                                save_tasks(updated_tasks_df)
+                                
                                 st.success("Tasks dispatched successfully! The algorithm cooked. 🧠🔥")
                                 st.rerun()
 
@@ -481,13 +485,17 @@ elif st.session_state.current_user['role'] == 'admin':
                                         for key in ['msg_allocated', 'msg_night_before', 'msg_1hr_before', 'msg_late', 'msg_admin_cancelled', 'msg_admin_completed', 'time_marked_done', 'rating']:
                                             next_task[key] = ""
                                         
-                                        global tasks_df
-                                        tasks_df = pd.concat([tasks_df, pd.DataFrame([next_task])], ignore_index=True)
+                                        # Fix applied here: Clean local variable creation, zero global scopes ✅
+                                        updated_tasks_df = pd.concat([tasks_df, pd.DataFrame([next_task])], ignore_index=True)
+                                        save_tasks(updated_tasks_df)
+
                                         st.toast("🔁 Recurring task generated for the future!")
                                     except Exception as e:
+                                        save_tasks(tasks_df) # Save anyway if recurrence fails
                                         st.error(f"Failed to calculate next recurring date: {e}")
+                                else:
+                                    save_tasks(tasks_df)
 
-                                save_tasks(tasks_df)
                                 st.success(f"Task Approved! Funds have been floated to Payroll, and {emp_name} got their points! W Admin. 👑")
                                 time.sleep(1)
                                 st.rerun()
@@ -558,9 +566,11 @@ elif st.session_state.current_user['role'] == 'admin':
                                 "amount": inc_amount,
                                 "status": "Cleared"
                             }])
-                            global acct_df
-                            acct_df = pd.concat([acct_df, new_tx], ignore_index=True)
-                            save_acct(acct_df)
+                            
+                            # Fix applied here: Clean local variable creation, zero global scopes ✅
+                            updated_acct_df = pd.concat([acct_df, new_tx], ignore_index=True)
+                            save_acct(updated_acct_df)
+                            
                             st.success("Tender income logged to the general ledger! Green candles everywhere 🟢")
                             st.rerun()
                         else:
@@ -602,8 +612,9 @@ elif st.session_state.current_user['role'] == 'admin':
                             "amount": total_liability,
                             "status": "Cleared"
                         }])
-                        acct_df = pd.concat([acct_df, new_tx], ignore_index=True)
-                        save_acct(acct_df)
+                        
+                        updated_acct_df = pd.concat([acct_df, new_tx], ignore_index=True)
+                        save_acct(updated_acct_df)
                         
                     st.success("Payroll fully disbursed and recorded in the ledger! W Business.")
                     st.rerun()
@@ -736,11 +747,13 @@ elif st.session_state.current_user['role'] == 'employee':
                                         for key in ['msg_allocated', 'msg_night_before', 'msg_1hr_before', 'msg_late', 'msg_admin_cancelled', 'msg_admin_completed', 'time_marked_done', 'rating']:
                                             new_task[key] = ""
                                         
-                                        global tasks_df
-                                        tasks_df = pd.concat([tasks_df, pd.DataFrame([new_task])], ignore_index=True)
+                                        # Clean local assignment
+                                        updated_tasks_df = pd.concat([tasks_df, pd.DataFrame([new_task])], ignore_index=True)
+                                    else:
+                                        updated_tasks_df = tasks_df
                                     
                                     with st.spinner("Processing cancellation and triggering auto-reassignment AI... 🧠"):
-                                        save_tasks(tasks_df)
+                                        save_tasks(updated_tasks_df)
                                     st.session_state[f"wa_reason_{task['id']}"] = reason
                                     st.rerun()
                                     
@@ -799,10 +812,12 @@ elif st.session_state.current_user['role'] == 'employee':
                                         for key in ['msg_allocated', 'msg_night_before', 'msg_1hr_before', 'msg_late', 'msg_admin_cancelled', 'msg_admin_completed', 'time_marked_done', 'rating']:
                                             new_task[key] = ""
                                         
-                                        tasks_df = pd.concat([tasks_df, pd.DataFrame([new_task])], ignore_index=True)
+                                        updated_tasks_df = pd.concat([tasks_df, pd.DataFrame([new_task])], ignore_index=True)
+                                    else:
+                                        updated_tasks_df = tasks_df
 
                                     with st.spinner("Processing cancellation and triggering auto-reassignment AI..."):
-                                        save_tasks(tasks_df)
+                                        save_tasks(updated_tasks_df)
                                     st.session_state[f"wa_reason_{task['id']}"] = reason
                                     st.rerun()
 
