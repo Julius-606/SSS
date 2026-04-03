@@ -136,7 +136,7 @@ def task_scan():
         if status in ['Pending', 'Confirmed', 'In Progress']:
             # 🚀 ALERT 1: Task Allocated
             if not row.get('msg_allocated'):
-                msg = f"🚨 *New Task Assigned!*\nHello {emp_name}, you have been assigned a new task: *{task_title}*.\nDue: {due_str}.\nPlease log into the portal to review and confirm your availability. 💼\n📞 Admin contact: {ADMIN_CONTACT}"
+                msg = f"🚨 *New Task Assigned!*\nHello {emp_name}, you have been assigned a new task: *{task_title}*.\nDue: {due_str}.\nPlease log into the portal to review and confirm your availability.\n https://3wfppg3ykc6sulf5tclxdp.streamlit.app/ 💼\n📞 Admin contact: {ADMIN_CONTACT}"
                 if send_whatsapp_msg(emp_phone, msg):
                     tasks_df.at[index, 'msg_allocated'] = 'Yes'
                     updates_made = True
@@ -149,21 +149,21 @@ def task_scan():
                     
                     # 🚀 ALERT 2: Night Before Reminder
                     if timedelta(hours=12) < time_diff <= timedelta(hours=24) and not row.get('msg_night_before'):
-                        msg = f"🌙 *Task Reminder*\nHello {emp_name}, a reminder that your task *{task_title}* is scheduled for tomorrow at {due_date.strftime('%I:%M %p')}. Have a good night! 🌟\n📞 Admin contact: {ADMIN_CONTACT}"
+                        msg = f"🌙 *Task Reminder*\nHello {emp_name}, a reminder that your task *{task_title}* is scheduled for tomorrow at {due_date.strftime('%I:%M %p')}. \n https://3wfppg3ykc6sulf5tclxdp.streamlit.app/ Have a good night! 🌟\n📞 Admin contact: {ADMIN_CONTACT}"
                         if send_whatsapp_msg(emp_phone, msg):
                             tasks_df.at[index, 'msg_night_before'] = 'Yes'
                             updates_made = True
 
                     # 🚀 ALERT 3: Sometime Before (1 hour before gig)
                     if timedelta(minutes=0) < time_diff <= timedelta(hours=1) and not row.get('msg_1hr_before'):
-                        msg = f"⏳ *1 Hour Reminder!*\nHello {emp_name}, your task *{task_title}* is due to start in less than an hour. Please ensure you are ready to begin. 🚀\n📞 Admin contact: {ADMIN_CONTACT}"
+                        msg = f"⏳ *1 Hour Reminder!*\nHello {emp_name}, your task *{task_title}* is due to start in less than an hour. Please ensure you are ready to begin. \n https://3wfppg3ykc6sulf5tclxdp.streamlit.app/ 🚀\n📞 Admin contact: {ADMIN_CONTACT}"
                         if send_whatsapp_msg(emp_phone, msg):
                             tasks_df.at[index, 'msg_1hr_before'] = 'Yes'
                             updates_made = True
 
                     # 🚀 ALERT 4: Late Alert (30 mins late AND hasn't clocked in)
                     if time_diff < timedelta(minutes=-30) and status in ['Pending', 'Confirmed'] and not row.get('msg_late'):
-                        msg = f"🚩 *Task Overdue Alert!* 🚩\nHello {emp_name}, you are over 30 minutes late to start *{task_title}*. Please log in and click 'Start Task' immediately, or the task may be reassigned. 🛑\n📞 Admin contact: {ADMIN_CONTACT}"
+                        msg = f"🚩 *Task Overdue Alert!* 🚩\nHello {emp_name}, you are over 30 minutes late to start *{task_title}*. Please log in and click 'Start Task' immediately, or the task may be reassigned. \n https://3wfppg3ykc6sulf5tclxdp.streamlit.app/ 🛑\n📞 Admin contact: {ADMIN_CONTACT}"
                         if send_whatsapp_msg(emp_phone, msg):
                             tasks_df.at[index, 'msg_late'] = 'Yes'
                             updates_made = True
