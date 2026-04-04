@@ -154,7 +154,8 @@ else:
 if last_reset != CURRENT_MONTH:
     try:
         if not tasks_df.empty:
-            active_statuses = ['Pending', 'Confirmed', 'In Progress', 'Completed', 'Approved']
+            # We now also keep 'Cancelled (Reviewed)' in the active sweep so they get correctly moved to archive
+            active_statuses = ['Pending', 'Confirmed', 'In Progress', 'Completed', 'Approved', 'Cancelled', 'Cancelled (Reviewed)']
             keep_df = tasks_df[tasks_df['status'].isin(active_statuses)]
             archive_df = tasks_df[~tasks_df['status'].isin(active_statuses)]
             
@@ -448,76 +449,103 @@ elif st.session_state.current_user['role'] == 'admin':
     # ---------------------------------------------------------
     elif admin_view == "✅ Quality Control (Approvals)":
         st.title("Task Approvals & QC 🔎")
-        st.caption("Workers marked these as done. Your job is to verify, drop a star rating, and float the money to their payroll account. No cap, keep the standards high.")
+        st.caption("Verify completed tasks (Take Profits) to float funds, or review cancelled tasks (Stop Losses) for risk management.")
         
         if tasks_df.empty:
             st.info("Database is empty. No setups forming right now.")
         else:
-            completed_tasks = tasks_df[tasks_df['status'] == 'Completed']
-            if completed_tasks.empty:
-                st.info("Zero tasks waiting for approval. Go touch some grass. 🌱")
+            # ✨ THE FIX: We pull BOTH Completed AND Cancelled tasks for Admin Review ✨
+            qc_tasks = tasks_df[tasks_df['status'].isin(['Completed', 'Cancelled'])]
+            
+            if qc_tasks.empty:
+                st.info("Zero tasks waiting for QC. The queues are clean. Go touch some grass. 🌱")
             else:
-                for i, t in completed_tasks.iterrows():
+                for i, t in qc_tasks.iterrows():
                     with st.container(border=True):
                         c1, c2 = st.columns([2, 1])
                         emp_name = get_employee_name(t['employee_Id'])
-                        with c1:
-                            st.markdown(f"### {t['title']}")
-                            st.caption(f"**Worker:** {emp_name} | **Category:** {t.get('category', 'General')} | **Marked Done:** {t.get('time_marked_done', 'N/A')}")
-                            if t.get('is_recurring') == 'Yes':
-                                st.info(f"🔁 This is a recurring task ({t.get('recurrence_pattern')}). Approving this will auto-generate the next session!")
-                            
-                            rating = st.slider(f"Rate {emp_name}'s performance ⭐️", 1, 5, 5, key=f"rate_{t['id']}")
-                            st.caption(f"*{rating} Stars = +{rating * 10} SSS Points for {emp_name}*")
-                            
-                        with c2:
-                            st.markdown("<br><br>", unsafe_allow_html=True)
-                            if st.button("Approve & Award Points ✅", key=f"apprv_{t['id']}", type="primary", use_container_width=True):
-                                # 1. Update Status & Rating
-                                tasks_df.loc[tasks_df['id'] == t['id'], 'status'] = 'Approved'
-                                
-                                # 🛑 FIX: Typecasting to String. No more integers blowing up the dataframe!
-                                tasks_df.loc[tasks_df['id'] == t['id'], 'rating'] = str(rating)
-                                
-                                # 2. Add Points to Worker
-                                emp_idx = emps_df.index[emps_df['id'] == str(t['employee_Id'])].tolist()[0]
-                                curr_pts = int(emps_df.at[emp_idx, 'points']) if pd.notna(emps_df.at[emp_idx, 'points']) else 0
-                                emps_df.at[emp_idx, 'points'] = curr_pts + (rating * 10)
-                                save_emps(emps_df)
-                                
-                                # 3. Auto-generate next instance if recurring
+                        
+                        # ✨ SCENARIO 1: TASK COMPLETED (Ready for Funds)
+                        if t['status'] == 'Completed':
+                            with c1:
+                                st.markdown(f"### ✨ {t['title']}")
+                                st.caption(f"**Worker:** {emp_name} | **Category:** {t.get('category', 'General')} | **Marked Done:** {t.get('time_marked_done', 'N/A')}")
                                 if t.get('is_recurring') == 'Yes':
-                                    pattern = t.get('recurrence_pattern', 'Weekly')
-                                    old_due = t.get('due_date')
-                                    try:
-                                        old_due_dt = datetime.strptime(old_due, "%Y-%m-%d %H:%M:%S")
-                                        if pattern == 'Daily': next_due = old_due_dt + timedelta(days=1)
-                                        elif pattern == 'Weekly': next_due = old_due_dt + timedelta(days=7)
-                                        elif pattern == 'Monthly': next_due = old_due_dt + timedelta(days=30)
-                                        else: next_due = old_due_dt + timedelta(days=7)
-                                        
-                                        next_task = t.copy()
-                                        next_task['id'] = int(time.time() * 1000)
-                                        next_task['due_date'] = next_due.strftime("%Y-%m-%d %H:%M:%S")
-                                        next_task['date_assigned'] = datetime.now(KISUMU_TZ).strftime("%Y-%m-%d %H:%M:%S")
-                                        next_task['status'] = 'Pending'
-                                        # Reset notification flags for the new baby task
-                                        for key in ['msg_allocated', 'msg_night_before', 'msg_1hr_before', 'msg_late', 'msg_admin_cancelled', 'msg_admin_completed', 'time_marked_done', 'rating']:
-                                            next_task[key] = ""
-                                        
-                                        updated_tasks_df = pd.concat([tasks_df, pd.DataFrame([next_task])], ignore_index=True)
-                                        save_tasks(updated_tasks_df)
+                                    st.info(f"🔁 This is a recurring task ({t.get('recurrence_pattern')}). Approving this will auto-generate the next session!")
+                                
+                                rating = st.slider(f"Rate {emp_name}'s performance ⭐️", 1, 5, 5, key=f"rate_{t['id']}")
+                                st.caption(f"*{rating} Stars = +{rating * 10} SSS Points for {emp_name}*")
+                                
+                            with c2:
+                                st.markdown("<br><br>", unsafe_allow_html=True)
+                                if st.button("Approve & Award Points ✅", key=f"apprv_{t['id']}", type="primary", use_container_width=True):
+                                    # 1. Update Status & Rating
+                                    tasks_df.loc[tasks_df['id'] == t['id'], 'status'] = 'Approved'
+                                    
+                                    # 🛑 FIX: Typecasting to String. No more integers blowing up the dataframe!
+                                    tasks_df.loc[tasks_df['id'] == t['id'], 'rating'] = str(rating)
+                                    
+                                    # 2. Add Points to Worker
+                                    emp_idx = emps_df.index[emps_df['id'] == str(t['employee_Id'])].tolist()[0]
+                                    curr_pts = int(emps_df.at[emp_idx, 'points']) if pd.notna(emps_df.at[emp_idx, 'points']) else 0
+                                    emps_df.at[emp_idx, 'points'] = curr_pts + (rating * 10)
+                                    save_emps(emps_df)
+                                    
+                                    # 3. Auto-generate next instance if recurring
+                                    if t.get('is_recurring') == 'Yes':
+                                        pattern = t.get('recurrence_pattern', 'Weekly')
+                                        old_due = t.get('due_date')
+                                        try:
+                                            old_due_dt = datetime.strptime(old_due, "%Y-%m-%d %H:%M:%S")
+                                            if pattern == 'Daily': next_due = old_due_dt + timedelta(days=1)
+                                            elif pattern == 'Weekly': next_due = old_due_dt + timedelta(days=7)
+                                            elif pattern == 'Monthly': next_due = old_due_dt + timedelta(days=30)
+                                            else: next_due = old_due_dt + timedelta(days=7)
+                                            
+                                            next_task = t.copy()
+                                            next_task['id'] = int(time.time() * 1000)
+                                            next_task['due_date'] = next_due.strftime("%Y-%m-%d %H:%M:%S")
+                                            next_task['date_assigned'] = datetime.now(KISUMU_TZ).strftime("%Y-%m-%d %H:%M:%S")
+                                            next_task['status'] = 'Pending'
+                                            # Reset notification flags for the new baby task
+                                            for key in ['msg_allocated', 'msg_night_before', 'msg_1hr_before', 'msg_late', 'msg_admin_cancelled', 'msg_admin_completed', 'time_marked_done', 'rating']:
+                                                next_task[key] = ""
+                                            
+                                            updated_tasks_df = pd.concat([tasks_df, pd.DataFrame([next_task])], ignore_index=True)
+                                            save_tasks(updated_tasks_df)
 
-                                        st.toast("🔁 Recurring task generated for the future!")
-                                    except Exception as e:
-                                        save_tasks(tasks_df) # Save anyway if recurrence fails
-                                        st.error(f"Failed to calculate next recurring date: {e}")
-                                else:
+                                            st.toast("🔁 Recurring task generated for the future!")
+                                        except Exception as e:
+                                            save_tasks(tasks_df) # Save anyway if recurrence fails
+                                            st.error(f"Failed to calculate next recurring date: {e}")
+                                    else:
+                                        save_tasks(tasks_df)
+
+                                    st.success(f"Task Approved! Funds have been floated to Payroll, and {emp_name} got their points! W Admin. 👑")
+                                    time.sleep(1)
+                                    st.rerun()
+
+                        # ✨ SCENARIO 2: TASK CANCELLED (Admin needs to review the reason)
+                        elif t['status'] == 'Cancelled':
+                            with c1:
+                                st.markdown(f"### 🚩 {t['title']} (Cancelled)")
+                                st.caption(f"**Worker:** {emp_name} | **Category:** {t.get('category', 'General')} | **Assigned:** {t.get('date_assigned', 'N/A')}")
+                                
+                                reason = t.get('cancel_reason', '')
+                                if not reason: reason = "No reason provided."
+                                st.error(f"**Reason for Cancellation:**\n{reason}")
+                                
+                                st.info("🤖 **Automation Note:** If this task was active and eligible, the SSS algorithm has already automatically duplicated and reassigned it to another worker. This log is just for your review.")
+                                
+                            with c2:
+                                st.markdown("<br><br>", unsafe_allow_html=True)
+                                if st.button("Acknowledge & Dismiss 🚮", key=f"ack_{t['id']}", use_container_width=True):
+                                    # Changing status hides it from the QC view but keeps it in the ledger!
+                                    tasks_df.loc[tasks_df['id'] == t['id'], 'status'] = 'Cancelled (Reviewed)'
                                     save_tasks(tasks_df)
-
-                                st.success(f"Task Approved! Funds have been floated to Payroll, and {emp_name} got their points! W Admin. 👑")
-                                time.sleep(1)
-                                st.rerun()
+                                    st.success("Cancellation logged in the ledger. Risk managed. 🛡️")
+                                    time.sleep(1)
+                                    st.rerun()
 
     # ---------------------------------------------------------
     # VIEW 2: FINANCE & ANALYTICS (THE NEW ACCOUNTING HUB)
@@ -871,7 +899,8 @@ elif st.session_state.current_user['role'] == 'employee':
                         st.info("Approved! ✨ Awaiting Funds Disbursement.")
                     elif task['status'] == 'Paid':
                         st.success(f"Paid ✅ | Rated: {task.get('rating', '5')} ⭐️")
-                    elif task['status'] in ['Cancelled', 'Absconded']:
+                    # ✨ Include the 'Cancelled (Reviewed)' status so the employee still sees it!
+                    elif task['status'] in ['Cancelled', 'Absconded', 'Cancelled (Reviewed)']:
                         st.error("Task Cancelled 🚩")
                         
                         reason_text = st.session_state.get(f"wa_reason_{task['id']}", task.get('cancel_reason', ''))
