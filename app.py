@@ -475,7 +475,9 @@ elif st.session_state.current_user['role'] == 'admin':
                             if st.button("Approve & Award Points ✅", key=f"apprv_{t['id']}", type="primary", use_container_width=True):
                                 # 1. Update Status & Rating
                                 tasks_df.loc[tasks_df['id'] == t['id'], 'status'] = 'Approved'
-                                tasks_df.loc[tasks_df['id'] == t['id'], 'rating'] = rating
+                                
+                                # 🛑 FIX: Typecasting to String. No more integers blowing up the dataframe!
+                                tasks_df.loc[tasks_df['id'] == t['id'], 'rating'] = str(rating)
                                 
                                 # 2. Add Points to Worker
                                 emp_idx = emps_df.index[emps_df['id'] == str(t['employee_Id'])].tolist()[0]
