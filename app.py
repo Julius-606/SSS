@@ -148,13 +148,28 @@ if last_reset != CURRENT_PERIOD:
             archive_df = tasks_df[~tasks_df['status'].isin(active_statuses)]
             
             if not archive_df.empty:
-                # Continuous Archiving to a single master sheet
+                # Continuous Archiving to a single master sheet with corporate spacing
                 archive_title = "Audit Archives"
                 try:
                     archive_ws = workbook.worksheet(archive_title)
+                    is_new_sheet = False
                 except gspread.exceptions.WorksheetNotFound:
                     archive_ws = workbook.add_worksheet(title=archive_title, rows="1000", cols="30")
+                    is_new_sheet = True
+                
+                if is_new_sheet:
+                    # Initial setup for a brand new archive sheet
                     archive_ws.append_row(list(archive_df.columns))
+                else:
+                    # Append visual spacing, official audit date header, and repopulate column headers
+                    audit_header = f"=== AUDIT PERIOD: {last_reset} | PROCESSED ON: {now.strftime('%Y-%m-%d %H:%M %Z')} ==="
+                    archive_ws.append_rows([
+                        [""], # Blank row for spacing
+                        [""], # Blank row for spacing
+                        [audit_header], # Official Date/Period Header
+                        list(archive_df.columns) # Repopulate headers for the new block
+                    ])
+                
                 archive_ws.append_rows(archive_df.values.tolist())
             
             tasks_ws.clear()
