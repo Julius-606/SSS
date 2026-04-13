@@ -110,7 +110,8 @@ def task_scan():
     for index, row in tasks_df.iterrows():
         status = row.get('status', '')
         
-        if status not in ['Pending', 'Confirmed', 'In Progress', 'Cancelled']:
+        # We also need to scan 'Completed' for the new QC Admin approval alert!
+        if status not in ['Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled']:
             continue
 
         emp_id = row.get('employee_Id')
@@ -126,11 +127,19 @@ def task_scan():
 
         # 🚀 ALERT ADMIN: Cancelled Task with Reason
         if status == 'Cancelled' and row.get('cancel_reason') and not row.get('msg_admin_cancelled'):
-            msg = f"🚨 *Task Cancellation Alert* 🚨\nWorker: {emp_name}\nTask: {task_title}\nReason Provided: {row.get('cancel_reason')}\n\nPlease review this in the SSS Admin Portal."
+            msg = f"🚨 *Task Cancellation Alert* 🚨\nWorker: {emp_name}\nTask: {task_title}\nReason Provided: {row.get('cancel_reason')}\n\n🤖 Note: If auto-reassign was possible, the algorithm has already created a new Pending task for another eligible worker!"
             if send_whatsapp_msg(ADMIN_CONTACT, msg):
                 tasks_df.at[index, 'msg_admin_cancelled'] = 'Yes'
                 updates_made = True
             continue # We don't need to process reminder alerts for cancelled tasks
+
+        # 🚀 ALERT ADMIN: Task Completed! QC Check Required
+        if status == 'Completed' and not row.get('msg_admin_completed'):
+            msg = f"✨ *Task Completed Alert* ✨\nWorker: {emp_name}\nTask: {task_title}\nBro just cooked and marked this done! 🍳\n\nPlease log into the SSS Admin Portal -> Quality Control to review, drop a star rating ⭐️, and float their funds to Payroll.\nhttps://3wfppg3ykc6sulf5tclxdp.streamlit.app/ "
+            if send_whatsapp_msg(ADMIN_CONTACT, msg):
+                tasks_df.at[index, 'msg_admin_completed'] = 'Yes'
+                updates_made = True
+            continue
 
         # For tasks that are still active
         if status in ['Pending', 'Confirmed', 'In Progress']:
@@ -175,7 +184,7 @@ def task_scan():
         print("💾 Updating Google Sheets with sent message records...")
         tasks_ws.clear()
         tasks_ws.update([tasks_df.columns.values.tolist()] + tasks_df.fillna('').values.tolist())
-        print("✅ Data saved. Sync complete.")
+        print("✅ Data saved. Sync complete. Main character energy maintained.")
     else:
         print("💤 No new alerts needed. System on standby.")
 
