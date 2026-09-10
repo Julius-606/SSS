@@ -1,14 +1,15 @@
-"""SSS job connection portal.
+"""SSS employment portal.
 
-The portal keeps Google Sheets as its datastore, but presents a job-centric
-workflow to three kinds of users: administrators, workers, and clients.
+Google Sheets remains the datastore.  The ``Workers``, ``Clients`` and ``Jobs``
+worksheet names are retained as storage-compatible aliases for older
+deployments, while the product language is employers, job seekers and
+vacancies.
 """
 
 import json
 import os
 import time
-import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import gspread
 import pandas as pd
@@ -17,10 +18,8 @@ import streamlit as st
 from google.oauth2.service_account import Credentials
 
 
-# Configuration remains compatible with the original deployment.  Secrets may
-# be supplied through Streamlit secrets or environment variables.
 st.set_page_config(
-    page_title="SSS Job Portal",
+    page_title="SSS Employment Portal",
     layout="wide",
     page_icon="✨",
     initial_sidebar_state="collapsed",
@@ -35,32 +34,38 @@ CLIENT_SHEET_URL = os.getenv("CLIENT_SHEET_URL", SHEET_URL)
 SUPPORT_NUMBER = os.getenv("SUPPORT_NUMBER", "254799084376")
 KISUMU_TZ = pytz.timezone("Africa/Nairobi")
 
-WORKER_HEADERS = [
-    "id", "name", "username", "password", "phone", "skills", "active",
+# Sheet titles remain compatible with the existing workbook.
+JOB_SEEKER_HEADERS = [
+    "id", "name", "username", "password", "phone", "skills",
+    "verification_status", "accreditation_status", "accreditation_id", "active",
 ]
-CLIENT_HEADERS = [
-    "id", "name", "username", "password", "phone", "email", "address", "active",
+EMPLOYER_HEADERS = [
+    "id", "name", "username", "password", "phone", "email", "address",
+    "verification_status", "accreditation_status", "accreditation_id", "active",
 ]
-JOB_HEADERS = [
-    "id", "title", "client_id", "worker_id", "description", "instructions",
-    "hours", "rate", "client_rate", "status", "date_posted", "due_date",
-    "time_marked_done", "payout", "total_bill", "payment_status", "invoice_id",
-    "applications", "application_deadline", "cancel_reason",
-    "msg_posted", "msg_application", "msg_selected", "msg_allocated",
-    "msg_night_before", "msg_1hr_before", "msg_late", "msg_completed",
-    "msg_payment", "msg_admin_cancelled",
+VACANCY_HEADERS = [
+    "id", "title", "employer_id", "job_seeker_id", "description", "requirements",
+    "employment_type", "location", "salary", "application_deadline", "status",
+    "date_posted", "applications", "cancel_reason", "msg_posted",
+    "msg_application", "msg_shortlisted", "msg_hired", "msg_rejected", "msg_closed",
 ]
 SETTINGS_HEADERS = ["setting_key", "setting_value"]
-ACCOUNTING_HEADERS = ["tx_id", "date", "type", "description", "amount", "status", "job_id", "client_id"]
+ACCOUNTING_HEADERS = [
+    "tx_id", "date", "type", "description", "amount", "status", "job_id",
+    "client_id",
+]
+# Compatibility names for integrations that imported the old constants.
+WORKER_HEADERS = JOB_SEEKER_HEADERS
+CLIENT_HEADERS = EMPLOYER_HEADERS
+JOB_HEADERS = VACANCY_HEADERS
 
 
 def inject_custom_bg(role):
-    """Apply the same lightweight role-specific styling used by the old UI."""
     if role == "admin":
         colors = ("#e0f2fe", "#ffffff", "#e5e7eb", "#334155")
-    elif role == "worker":
+    elif role == "job_seeker":
         colors = ("#ffffff", "#f0f9ff", "#f3f4f6", "#334155")
-    elif role == "client":
+    elif role == "employer":
         colors = ("#f8fafc", "#e0f2fe", "#bae6fd", "#0f172a")
     else:
         colors = ("#f8fafc", "#e0f2fe", "#bae6fd", "#0f172a")
@@ -73,33 +78,52 @@ def inject_custom_bg(role):
     )
 
 
+def _canonical_status(value):
+    value = str(value or "").strip()
+    normalised = {
+        "open": "Open",
+        "applied": "Applications",
+        "applications": "Applications",
+        "selected": "Shortlisted",
+        "shortlisted": "Shortlisted",
+        "confirmed": "Hired",
+        "hired": "Hired",
+        "in progress": "Hired",
+        "completed": "Closed",
+        "payment due": "Closed",
+        "paid": "Closed",
+        "cancelled": "Closed",
+        "closed": "Closed",
+        "withdrawn": "Withdrawn",
+        "rejected": "Rejected",
+    }
+    return normalised.get(value.lower(), value or "Open")
+
+
 @st.cache_resource
 def get_gspread_client():
-    """Authenticate without ever printing or exposing credentials."""
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
         ]
-        return gspread.authorize(Credentials.from_service_account_info(creds_dict, scopes=scopes))
+        return gspread.authorize(
+            Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        )
     except Exception as exc:
         st.error(f"Database authentication failed: {exc}")
         st.stop()
 
 
 def _copy_legacy_records(workbook, new_ws, legacy_title, headers):
-    """Migrate an old Employees/Tasks sheet once, when present and useful."""
+    """Copy old Employees/Tasks records only into an empty replacement sheet."""
     if new_ws.get_all_records():
         return
     try:
         legacy = workbook.worksheet(legacy_title)
         records = legacy.get_all_records()
-    except gspread.exceptions.WorksheetNotFound:
-        return
-    except Exception:
-        return
-    if not records:
+    except (gspread.exceptions.WorksheetNotFound, gspread.exceptions.GSpreadException):
         return
     migrated = []
     for record in records:
@@ -112,21 +136,21 @@ def _copy_legacy_records(workbook, new_ws, legacy_title, headers):
                 "password": record.get("password", ""),
                 "phone": record.get("phone", ""),
                 "active": record.get("active", "Yes"),
+                "verification_status": record.get("verification_status", "Pending"),
+                "accreditation_status": record.get("accreditation_status", "Pending"),
             })
         else:
             item.update({
                 "id": record.get("id", ""),
                 "title": record.get("title", ""),
-                "worker_id": record.get("employee_Id", record.get("worker_id", "")),
-                "hours": record.get("hours", ""),
-                "rate": record.get("rate", ""),
-                "status": record.get("status", "Open"),
+                "employer_id": record.get("client_id", ""),
+                "job_seeker_id": record.get("employee_Id", record.get("worker_id", "")),
+                "description": record.get("description", record.get("instructions", "")),
+                "requirements": record.get("requirements", record.get("instructions", "")),
+                "status": _canonical_status(record.get("status", "Open")),
                 "date_posted": record.get("date_assigned", ""),
-                "due_date": record.get("due_date", ""),
-                "time_marked_done": record.get("time_marked_done", ""),
-                "payout": record.get("payout", ""),
-                "instructions": record.get("instructions", ""),
-                "cancel_reason": record.get("cancel_reason", ""),
+                "application_deadline": record.get("application_deadline", record.get("due_date", "")),
+                "applications": record.get("applications", "[]"),
             })
         migrated.append([item.get(header, "") for header in headers])
     if migrated:
@@ -135,7 +159,6 @@ def _copy_legacy_records(workbook, new_ws, legacy_title, headers):
 
 @st.cache_resource
 def get_worksheets():
-    """Mount or create all portal worksheets and perform legacy migration."""
     client = get_gspread_client()
     try:
         workbook = client.open_by_url(SHEET_URL)
@@ -152,34 +175,41 @@ def get_worksheets():
             else:
                 missing = [header for header in headers if header not in existing]
                 if missing:
+                    start = len(existing) + 1
+                    end = start + len(missing) - 1
                     ws.update(
                         values=[missing],
                         range_name=(
-                            f"{gspread.utils.rowcol_to_a1(1, len(existing) + 1)}:"
-                            f"{gspread.utils.rowcol_to_a1(1, len(existing) + len(missing))}"
+                            f"{gspread.utils.rowcol_to_a1(1, start)}:"
+                            f"{gspread.utils.rowcol_to_a1(1, end)}"
                         ),
                     )
             return ws
         except gspread.exceptions.WorksheetNotFound:
-            ws = workbook.add_worksheet(title=title, rows="2000", cols=max(20, len(headers)))
+            ws = workbook.add_worksheet(
+                title=title, rows="2000", cols=max(20, len(headers))
+            )
             ws.append_row(headers)
             return ws
 
-    workers_ws = get_or_create("Workers", WORKER_HEADERS)
-    clients_ws = get_or_create("Clients", CLIENT_HEADERS)
-    jobs_ws = get_or_create("Jobs", JOB_HEADERS)
+    job_seekers_ws = get_or_create("Workers", JOB_SEEKER_HEADERS)
+    employers_ws = get_or_create("Clients", EMPLOYER_HEADERS)
+    vacancies_ws = get_or_create("Jobs", VACANCY_HEADERS)
     settings_ws = get_or_create("Settings", SETTINGS_HEADERS)
-    acct_ws = get_or_create("Accounting", ACCOUNTING_HEADERS)
+    # Keep this worksheet so existing finance data is not deleted, although
+    # employment workflows no longer create or display payment records.
+    accounting_ws = get_or_create("Accounting", ACCOUNTING_HEADERS)
+    _copy_legacy_records(workbook, job_seekers_ws, "Employees", JOB_SEEKER_HEADERS)
+    _copy_legacy_records(workbook, vacancies_ws, "Tasks", VACANCY_HEADERS)
+    return (
+        workbook, job_seekers_ws, employers_ws, vacancies_ws, settings_ws,
+        accounting_ws,
+    )
 
-    _copy_legacy_records(workbook, workers_ws, "Employees", WORKER_HEADERS)
-    _copy_legacy_records(workbook, jobs_ws, "Tasks", JOB_HEADERS)
-    if not workers_ws.get_all_records():
-        workers_ws.append_row(["worker1", "Wanjiku (Nanny Pro)", "wanjiku", "password123", "254700000000", "Cleaning", "Yes"])
-        workers_ws.append_row(["worker2", "Ochieng (Deep Cleaner)", "ochieng", "password123", "254700000000", "Cleaning", "Yes"])
-    return workbook, workers_ws, clients_ws, jobs_ws, settings_ws, acct_ws
 
-
-workbook, workers_ws, clients_ws, jobs_ws, settings_ws, acct_ws = get_worksheets()
+workbook, job_seekers_ws, employers_ws, vacancies_ws, settings_ws, accounting_ws = (
+    get_worksheets()
+)
 
 
 def _empty_frame(headers):
@@ -191,70 +221,77 @@ def _normalise_people(frame, headers):
     for header in headers:
         if header not in frame.columns:
             frame[header] = ""
-    for column in ("id", "username", "password", "phone", "active"):
-        if column in frame.columns:
-            frame[column] = frame[column].fillna("").astype(str)
+    for column in headers:
+        frame[column] = frame[column].fillna("").astype(str)
+    for column in ("verification_status", "accreditation_status"):
+        frame[column] = frame[column].replace("", "Pending")
+    frame["active"] = frame["active"].replace("", "Yes")
     return frame
 
 
-def _normalise_jobs(frame):
-    frame = frame.copy() if not frame.empty else _empty_frame(JOB_HEADERS)
-    for header in JOB_HEADERS:
+def _normalise_vacancies(frame):
+    frame = frame.copy() if not frame.empty else _empty_frame(VACANCY_HEADERS)
+    for header in VACANCY_HEADERS:
         if header not in frame.columns:
             frame[header] = ""
-    for column in ("id", "client_id", "worker_id", "status", "applications"):
+    # Populate canonical fields from old names without deleting old columns.
+    for index, row in frame.iterrows():
+        if not str(row.get("employer_id", "")).strip():
+            frame.at[index, "employer_id"] = row.get("client_id", "")
+        if not str(row.get("job_seeker_id", "")).strip():
+            frame.at[index, "job_seeker_id"] = row.get("worker_id", "")
+        if not str(row.get("description", "")).strip():
+            frame.at[index, "description"] = row.get("instructions", "")
+        if not str(row.get("requirements", "")).strip():
+            frame.at[index, "requirements"] = row.get("description", row.get("instructions", ""))
+        if not str(row.get("application_deadline", "")).strip():
+            frame.at[index, "application_deadline"] = row.get("due_date", "")
+        if not str(row.get("salary", "")).strip():
+            legacy_pay = row.get("payout", "") or row.get("rate", "")
+            if str(legacy_pay).strip():
+                frame.at[index, "salary"] = f"Legacy compensation: Ksh {legacy_pay}"
+        frame.at[index, "status"] = _canonical_status(row.get("status", "Open"))
+        if not str(row.get("applications", "")).strip():
+            frame.at[index, "applications"] = "[]"
+    for column in VACANCY_HEADERS:
         frame[column] = frame[column].fillna("").astype(str)
-    for column in ("hours", "rate", "client_rate", "payout", "total_bill"):
-        frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0.0)
     return frame
 
 
 @st.cache_data(ttl=30)
 def fetch_portal_data():
-    """Fetch Workers, Clients, Jobs, Settings and Accounting in one read."""
-    workers = _normalise_people(pd.DataFrame(workers_ws.get_all_records()), WORKER_HEADERS)
-    clients = _normalise_people(pd.DataFrame(clients_ws.get_all_records()), CLIENT_HEADERS)
-    jobs = _normalise_jobs(pd.DataFrame(jobs_ws.get_all_records()))
-    settings = pd.DataFrame(settings_ws.get_all_records())
-    accounting = pd.DataFrame(acct_ws.get_all_records())
-    if accounting.empty:
-        accounting = _empty_frame(ACCOUNTING_HEADERS)
-    for column in ("amount",):
-        accounting[column] = pd.to_numeric(accounting[column], errors="coerce").fillna(0.0)
-    return workers, clients, jobs, settings, accounting
+    job_seekers = _normalise_people(
+        pd.DataFrame(job_seekers_ws.get_all_records()), JOB_SEEKER_HEADERS
+    )
+    employers = _normalise_people(
+        pd.DataFrame(employers_ws.get_all_records()), EMPLOYER_HEADERS
+    )
+    vacancies = _normalise_vacancies(pd.DataFrame(vacancies_ws.get_all_records()))
+    accounting = pd.DataFrame(accounting_ws.get_all_records())
+    return job_seekers, employers, vacancies, accounting
 
 
-workers_df, clients_df, jobs_df, settings_df, acct_df = fetch_portal_data()
+job_seekers_df, employers_df, vacancies_df, acct_df = fetch_portal_data()
 
 
 def _save_frame(ws, frame):
-    """Replace a worksheet atomically enough for gspread's row-oriented API."""
     clean = frame.fillna("").copy()
-    try:
-        ws.clear()
-        ws.update([clean.columns.tolist()] + clean.astype(object).values.tolist())
-    except gspread.exceptions.GSpreadException as exc:
-        st.error(f"Could not save portal data: {exc}")
-        raise
+    ws.clear()
+    ws.update([clean.columns.tolist()] + clean.astype(object).values.tolist())
 
 
-def save_jobs(frame):
-    _save_frame(jobs_ws, _normalise_jobs(frame))
+def save_vacancies(frame):
+    _save_frame(vacancies_ws, _normalise_vacancies(frame))
     fetch_portal_data.clear()
 
 
-def save_workers(frame):
-    _save_frame(workers_ws, _normalise_people(frame, WORKER_HEADERS))
+def save_job_seekers(frame):
+    _save_frame(job_seekers_ws, _normalise_people(frame, JOB_SEEKER_HEADERS))
     fetch_portal_data.clear()
 
 
-def save_clients(frame):
-    _save_frame(clients_ws, _normalise_people(frame, CLIENT_HEADERS))
-    fetch_portal_data.clear()
-
-
-def save_acct(frame):
-    _save_frame(acct_ws, frame if not frame.empty else _empty_frame(ACCOUNTING_HEADERS))
+def save_employers(frame):
+    _save_frame(employers_ws, _normalise_people(frame, EMPLOYER_HEADERS))
     fetch_portal_data.clear()
 
 
@@ -265,16 +302,16 @@ def _name_for(frame, value, unknown):
     return str(match.iloc[0]["name"]) if not match.empty else unknown
 
 
-def get_worker_name(worker_id):
-    return _name_for(workers_df, worker_id, "Unknown Worker")
+def get_job_seeker_name(value):
+    return _name_for(job_seekers_df, value, "Unknown job seeker")
 
 
-def get_client_name(client_id):
-    return _name_for(clients_df, client_id, "Unknown Client")
+def get_employer_name(value):
+    return _name_for(employers_df, value, "Unknown employer")
 
 
 def _parse_applications(value):
-    if not value or str(value).lower() == "nan":
+    if not value or str(value).lower() in {"nan", "none"}:
         return []
     try:
         parsed = json.loads(value)
@@ -283,16 +320,12 @@ def _parse_applications(value):
         return []
 
 
-def _job_applications(job):
-    return _parse_applications(job.get("applications", ""))
-
-
 def _encode_applications(applications):
     return json.dumps(applications, separators=(",", ":"))
 
 
 def _job_id():
-    return f"job-{int(time.time() * 1000)}"
+    return f"vacancy-{int(time.time() * 1000)}"
 
 
 def _refresh():
@@ -305,63 +338,47 @@ def _logout():
     _refresh()
 
 
-def _add_accounting(description, amount, tx_type, job_id="", client_id=""):
-    row = pd.DataFrame([{
-        "tx_id": f"TX-{tx_type.upper()}-{int(time.time())}",
-        "date": datetime.now(KISUMU_TZ).strftime("%Y-%m-%d %H:%M:%S"),
-        "type": tx_type,
-        "description": description,
-        "amount": float(amount),
-        "status": "Cleared",
-        "job_id": job_id,
-        "client_id": client_id,
-    }])
-    save_acct(pd.concat([acct_df, row], ignore_index=True))
+def _verified(row):
+    accepted = {"verified", "accredited", "approved", "yes", "true", "1"}
+    verification = str(row.get("verification_status", "")).strip().lower()
+    accreditation = str(row.get("accreditation_status", "")).strip().lower()
+    return verification in accepted and accreditation in accepted
 
 
-def run_monthly_job_archive():
-    """Move closed jobs to a dated archive sheet at the start of each month."""
-    global jobs_df
-    current_month = datetime.now(KISUMU_TZ).strftime("%Y-%m")
-    if settings_df.empty or "setting_key" not in settings_df.columns:
-        settings_ws.append_row(["last_reset", current_month])
-        return
-    matches = settings_df.loc[
-        settings_df["setting_key"].astype(str) == "last_reset", "setting_value"
-    ]
-    if matches.empty:
-        settings_ws.append_row(["last_reset", current_month])
-        return
-    last_reset = str(matches.iloc[0])
-    if last_reset == current_month:
-        return
+def _active(row):
+    return str(row.get("active", "Yes")).strip().lower() not in {"no", "false", "0"}
+
+
+def _deadline_passed(value):
+    if not value or str(value).strip().lower() in {"nan", "none"}:
+        return False
     try:
-        active_statuses = {
-            "Open", "Applied", "Selected", "Confirmed", "In Progress",
-            "Completed", "Payment Due",
-        }
-        archive_df = jobs_df[~jobs_df["status"].isin(active_statuses)].copy()
-        keep_df = jobs_df[jobs_df["status"].isin(active_statuses)].copy()
-        if not archive_df.empty:
-            archive_title = f"Archive_{last_reset}"
-            try:
-                archive_ws = workbook.worksheet(archive_title)
-            except gspread.exceptions.WorksheetNotFound:
-                archive_ws = workbook.add_worksheet(
-                    title=archive_title, rows="2000", cols=max(20, len(JOB_HEADERS))
-                )
-                archive_ws.append_row(archive_df.columns.tolist())
-            archive_ws.append_rows(archive_df.astype(object).fillna("").values.tolist())
-        _save_frame(jobs_ws, keep_df)
-        cell = settings_ws.find("last_reset")
-        settings_ws.update_cell(cell.row, cell.col + 1, current_month)
-        jobs_df = keep_df
-        fetch_portal_data.clear()
-    except (gspread.exceptions.GSpreadException, ValueError) as exc:
-        st.error(f"Monthly job archive failed: {exc}")
+        deadline = datetime.strptime(str(value), "%Y-%m-%d")
+    except ValueError:
+        return False
+    return deadline.date() < datetime.now(KISUMU_TZ).date()
 
 
-run_monthly_job_archive()
+def _application_seeker_id(application):
+    return str(application.get("job_seeker_id", application.get("worker_id", "")))
+
+
+def _application_for(application, seeker_id):
+    return _application_seeker_id(application) == str(seeker_id)
+
+
+def _application_statuses(job):
+    return _parse_applications(job.get("applications", ""))
+
+
+def _new_vacancy_row(**values):
+    row = {header: "" for header in VACANCY_HEADERS}
+    row.update(values)
+    row["applications"] = row.get("applications") or "[]"
+    row["date_posted"] = row.get("date_posted") or datetime.now(KISUMU_TZ).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    return row
 
 
 if "current_user" not in st.session_state:
@@ -375,292 +392,264 @@ if st.session_state.current_user is None:
     inject_custom_bg("login")
     left, centre, right = st.columns([1, 2, 1])
     with centre:
-        st.markdown("<h1 style='text-align:center'>✨ SSS Job Portal</h1>", unsafe_allow_html=True)
         st.markdown(
-            "<p style='text-align:center'>Swift-hands Student Services. Authorized Users Only.</p>",
+            "<h1 style='text-align:center'>✨ SSS Employment Portal</h1>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "<p style='text-align:center'>Verified businesses and accredited job seekers.</p>",
             unsafe_allow_html=True,
         )
         with st.container(border=True):
             with st.form("login_form"):
                 login_user = st.text_input("Username")
                 login_pass = st.text_input("Password", type="password")
-                submitted = st.form_submit_button("Log In 🚀", use_container_width=True, type="primary")
+                submitted = st.form_submit_button(
+                    "Log In 🚀", use_container_width=True, type="primary"
+                )
             if submitted:
                 if login_user == ADMIN_USER and login_pass == ADMIN_PASS:
-                    st.session_state.current_user = {"role": "admin", "name": "Administrator"}
-                    _refresh()
-                worker_match = workers_df[
-                    (workers_df["username"] == login_user)
-                    & (workers_df["password"] == login_pass)
-                    & (workers_df["active"].str.lower().isin(["yes", "true", "1", ""]))
-                ]
-                client_match = clients_df[
-                    (clients_df["username"] == login_user)
-                    & (clients_df["password"] == login_pass)
-                    & (clients_df["active"].str.lower().isin(["yes", "true", "1", ""]))
-                ]
-                if not worker_match.empty:
-                    row = worker_match.iloc[0]
                     st.session_state.current_user = {
-                        "role": "worker", "id": row["id"], "name": row["name"], "is_phased": False,
+                        "role": "admin", "name": "Administrator",
                     }
                     _refresh()
-                elif not client_match.empty:
-                    row = client_match.iloc[0]
-                    st.session_state.current_user = {
-                        "role": "client", "id": row["id"], "name": row["name"], "is_phased": False,
-                    }
-                    _refresh()
+                seeker_match = job_seekers_df[
+                    (job_seekers_df["username"] == login_user)
+                    & (job_seekers_df["password"] == login_pass)
+                    & job_seekers_df.apply(_active, axis=1)
+                ]
+                employer_match = employers_df[
+                    (employers_df["username"] == login_user)
+                    & (employers_df["password"] == login_pass)
+                    & employers_df.apply(_active, axis=1)
+                ]
+                if not seeker_match.empty or not employer_match.empty:
+                    row = (
+                        seeker_match.iloc[0] if not seeker_match.empty
+                        else employer_match.iloc[0]
+                    )
+                    role = "job_seeker" if not seeker_match.empty else "employer"
+                    if not _verified(row):
+                        st.error("Your account must be verified and accredited before you can participate.")
+                    else:
+                        st.session_state.current_user = {
+                            "role": role, "id": row["id"], "name": row["name"],
+                            "is_phased": False,
+                        }
+                        _refresh()
                 elif not (login_user == ADMIN_USER and login_pass == ADMIN_PASS):
                     st.error("Invalid credentials. Access denied. 🛑")
 
 
 elif st.session_state.current_user["role"] == "admin":
     inject_custom_bg("admin")
-    user = st.session_state.current_user
     st.sidebar.title("🛡️ Admin Portal")
     admin_view = st.sidebar.radio(
-        "Navigation",
-        ["🏢 Job & Worker Management", "👥 Client Management", "💼 Finance & Client Billing"],
+        "Navigation", ["🏢 Employer & Job Seeker Management", "📋 Vacancy Management"]
     )
-    st.sidebar.write("---")
     if st.sidebar.button("Log Out 🚪", type="primary", use_container_width=True):
         _logout()
 
-    # Admin can phase into either type of user without changing credentials.
-    st.sidebar.subheader("👁️ View As Worker / Client")
-    phase_type = st.sidebar.selectbox("Dashboard type", ["Worker", "Client"])
-    phase_frame = workers_df if phase_type == "Worker" else clients_df
-    if not phase_frame.empty:
-        phase_target = st.sidebar.selectbox("Select user", phase_frame["name"].tolist())
+    st.sidebar.subheader("👁️ View As User")
+    phase_type = st.sidebar.selectbox("Dashboard type", ["Job Seeker", "Employer"])
+    phase_frame = job_seekers_df if phase_type == "Job Seeker" else employers_df
+    verified_phase = phase_frame[phase_frame.apply(_verified, axis=1)] if not phase_frame.empty else phase_frame
+    if not verified_phase.empty:
+        phase_target = st.sidebar.selectbox("Select user", verified_phase["name"].tolist())
         if st.sidebar.button("View Dashboard 👁️", use_container_width=True):
-            row = phase_frame[phase_frame["name"] == phase_target].iloc[0]
+            row = verified_phase[verified_phase["name"] == phase_target].iloc[0]
             st.session_state.current_user = {
-                "role": phase_type.lower(), "id": row["id"], "name": row["name"], "is_phased": True,
+                "role": "job_seeker" if phase_type == "Job Seeker" else "employer",
+                "id": row["id"], "name": row["name"], "is_phased": True,
             }
             _refresh()
 
-    if admin_view == "🏢 Job & Worker Management":
-        st.title("Job & Worker Management")
-        add_col, list_col = st.columns([1, 2])
-        with add_col:
-            st.subheader("➕ Add New Worker")
-            with st.form("add_worker_form"):
-                name = st.text_input("Full Name")
-                username = st.text_input("Username")
-                password = st.text_input("Password", type="password")
-                phone = st.text_input("Phone Number")
-                skills = st.text_input("Skills")
-                if st.form_submit_button("Add Worker 🤝"):
+    if admin_view == "🏢 Employer & Job Seeker Management":
+        st.title("Employer & Job Seeker Management")
+        employer_col, seeker_col = st.columns(2)
+        with employer_col:
+            st.subheader("➕ Add Employer / Business")
+            with st.form("add_employer_form"):
+                name = st.text_input("Business name")
+                username = st.text_input("Employer username")
+                password = st.text_input("Employer password", type="password")
+                phone = st.text_input("Business phone")
+                email = st.text_input("Business email")
+                address = st.text_input("Business address")
+                verification = st.selectbox("Verification", ["Pending", "Verified"])
+                accreditation = st.selectbox("Accreditation", ["Pending", "Accredited"])
+                accreditation_id = st.text_input("Accreditation ID")
+                if st.form_submit_button("Add Employer"):
+                    usernames = set(job_seekers_df["username"]) | set(employers_df["username"])
                     if not all([name, username, password, phone]):
-                        st.error("Please fill out all required fields.")
-                    elif username in workers_df["username"].values or username in clients_df["username"].values:
+                        st.error("Name, username, password and phone are required.")
+                    elif username in usernames:
                         st.error("Username already taken.")
+                    elif accreditation == "Accredited" and not accreditation_id.strip():
+                        st.error("An accreditation ID is required for an accredited employer.")
                     else:
-                        workers_df = pd.concat([workers_df, pd.DataFrame([{
-                            "id": f"worker-{int(time.time())}", "name": name, "username": username,
-                            "password": password, "phone": phone, "skills": skills, "active": "Yes",
+                        employers_df = pd.concat([employers_df, pd.DataFrame([{
+                            "id": f"employer-{int(time.time())}", "name": name,
+                            "username": username, "password": password, "phone": phone,
+                            "email": email, "address": address,
+                            "verification_status": verification,
+                            "accreditation_status": accreditation,
+                            "accreditation_id": accreditation_id, "active": "Yes",
                         }])], ignore_index=True)
-                        save_workers(workers_df)
-                        st.success("Worker added successfully.")
+                        save_employers(employers_df)
+                        st.success("Employer added.")
                         _refresh()
-            st.subheader("Worker Directory")
-            st.dataframe(workers_df[["id", "name", "username", "phone", "skills", "active"]], hide_index=True, use_container_width=True)
-
-        with list_col:
-            st.subheader("🚀 Post a Job")
-            with st.form("admin_post_job_form"):
-                title = st.text_input("Job Title")
-                description = st.text_area("Description / Instructions")
-                client_options = dict(zip(clients_df["name"], clients_df["id"])) if not clients_df.empty else {}
-                client_name = st.selectbox("Client", list(client_options) or ["No clients registered"])
-                hours = st.number_input("Estimated Hours", min_value=0.5, value=1.0, step=0.5)
-                worker_rate = st.number_input("Worker Pay (Ksh/hr)", min_value=0.0, value=150.0, step=10.0)
-                client_rate = st.number_input("Client Bill (Ksh/hr)", min_value=0.0, value=250.0, step=10.0)
-                due_date = st.date_input("Due Date")
-                due_time = st.time_input("Due Time")
-                post = st.form_submit_button("Post Job 🚀", type="primary")
-            if post:
-                if not title.strip() or not client_options:
-                    st.error("A title and registered client are required.")
-                else:
-                    jobs_df = pd.concat([jobs_df, pd.DataFrame([{
-                        "id": _job_id(), "title": title.strip(), "client_id": client_options[client_name],
-                        "worker_id": "", "description": description, "instructions": description,
-                        "hours": hours, "rate": worker_rate, "client_rate": client_rate,
-                        "status": "Open", "date_posted": datetime.now(KISUMU_TZ).strftime("%Y-%m-%d %H:%M:%S"),
-                        "due_date": f"{due_date} {due_time}", "payout": hours * worker_rate,
-                        "total_bill": hours * client_rate, "payment_status": "Unpaid",
-                        "invoice_id": "", "applications": "[]",
-                    }])], ignore_index=True)
-                    save_jobs(jobs_df)
-                    st.success("Job posted successfully.")
-                    _refresh()
-
-        st.subheader("📋 Active Job Postings")
-        active = jobs_df[jobs_df["status"].isin(["Open", "Applied", "Selected", "Confirmed", "In Progress", "Completed", "Payment Due", "Paid"])]
-        if active.empty:
-            st.info("No jobs have been posted yet.")
-        else:
-            display = active[["id", "title", "client_id", "worker_id", "status", "due_date", "total_bill", "payment_status"]].copy()
-            display["Client"] = display["client_id"].apply(get_client_name)
-            display["Worker"] = display["worker_id"].apply(get_worker_name)
-            st.dataframe(display[["id", "title", "Client", "Worker", "status", "due_date", "total_bill", "payment_status"]], hide_index=True, use_container_width=True)
-
-    elif admin_view == "👥 Client Management":
-        st.title("Client Management")
-        with st.form("add_client_form"):
-            c1, c2 = st.columns(2)
-            with c1:
-                name = st.text_input("Client / Organisation Name")
-                username = st.text_input("Client Username")
-                password = st.text_input("Client Password", type="password")
-            with c2:
-                phone = st.text_input("Phone Number")
-                email = st.text_input("Email")
-                address = st.text_input("Address")
-            if st.form_submit_button("Add Client 🤝"):
-                if not all([name, username, password, phone]):
-                    st.error("Name, username, password and phone are required.")
-                elif username in workers_df["username"].values or username in clients_df["username"].values:
-                    st.error("Username already taken.")
-                else:
-                    clients_df = pd.concat([clients_df, pd.DataFrame([{
-                        "id": f"client-{int(time.time())}", "name": name, "username": username,
-                        "password": password, "phone": phone, "email": email, "address": address, "active": "Yes",
-                    }])], ignore_index=True)
-                    save_clients(clients_df)
-                    st.success("Client added successfully.")
-                    _refresh()
-        st.subheader("Registered Clients")
-        st.dataframe(clients_df.drop(columns=["password"], errors="ignore"), hide_index=True, use_container_width=True)
-        if not clients_df.empty:
-            st.subheader("Edit Client")
-            edit_name = st.selectbox("Select client to edit", clients_df["name"].tolist())
-            selected = clients_df[clients_df["name"] == edit_name].iloc[0]
-            with st.form("edit_client_form"):
-                edit_phone = st.text_input("Phone", value=str(selected.get("phone", "")))
-                edit_email = st.text_input("Email", value=str(selected.get("email", "")))
-                edit_address = st.text_input("Address", value=str(selected.get("address", "")))
-                edit_active = st.selectbox(
-                    "Account status", ["Yes", "No"],
-                    index=0 if str(selected.get("active", "Yes")).lower() in {"yes", "true", "1"} else 1,
+            st.dataframe(
+                employers_df.drop(columns=["password"], errors="ignore"),
+                hide_index=True, use_container_width=True,
+            )
+            if not employers_df.empty:
+                edit_name = st.selectbox(
+                    "Employer account to manage", employers_df["name"].tolist(),
+                    key="edit_employer_name",
                 )
-                if st.form_submit_button("Save Client Changes"):
-                    clients_df.loc[clients_df["id"] == selected["id"], ["phone", "email", "address", "active"]] = [
-                        edit_phone, edit_email, edit_address, edit_active,
-                    ]
-                    save_clients(clients_df)
-                    st.success("Client details updated.")
-                    _refresh()
-
-    else:
-        st.title("Finance & Client Billing")
-        total_income = acct_df[acct_df["type"] == "Income"]["amount"].sum() if not acct_df.empty else 0
-        total_payroll = acct_df[acct_df["type"] == "Expense"]["amount"].sum() if not acct_df.empty else 0
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Client Income (Ksh)", f"{total_income:,.2f}")
-        m2.metric("Worker Payroll (Ksh)", f"{total_payroll:,.2f}")
-        m3.metric("Gross Margin (Ksh)", f"{total_income - total_payroll:,.2f}")
-        st.subheader("Client invoices")
-        invoice_jobs = jobs_df[jobs_df["status"].isin(["Completed", "Payment Due", "Paid"])]
-        if invoice_jobs.empty:
-            st.info("No completed jobs require billing.")
-        else:
-            st.dataframe(invoice_jobs[["id", "title", "client_id", "worker_id", "total_bill", "payment_status", "invoice_id"]], hide_index=True, use_container_width=True)
-            for _, job in invoice_jobs.iterrows():
-                if job["status"] != "Paid" and st.button(f"Record client payment: {job['title']}", key=f"admin_pay_{job['id']}"):
-                    jobs_df.loc[jobs_df["id"] == job["id"], ["status", "payment_status"]] = ["Paid", "Paid"]
-                    save_jobs(jobs_df)
-                    _add_accounting(f"Payment for {job['title']}", job["total_bill"], "Income", job["id"], job["client_id"])
-                    _refresh()
-        unpaid = jobs_df[jobs_df["status"] == "Completed"]
-        if not unpaid.empty:
-            st.subheader("Worker payroll")
-            report = unpaid.groupby("worker_id")["payout"].sum().reset_index()
-            report["Worker"] = report["worker_id"].apply(get_worker_name)
-            st.dataframe(report[["Worker", "payout"]].rename(columns={"payout": "Owed (Ksh)"}), hide_index=True)
-            if st.button("Disburse all worker payroll 💸", type="primary"):
-                total = unpaid["payout"].sum()
-                jobs_df.loc[jobs_df["status"] == "Completed", "status"] = "Payment Due"
-                save_jobs(jobs_df)
-                _add_accounting("Worker payroll disbursement", total, "Expense")
-                _refresh()
-        if not acct_df.empty:
-            st.subheader("Accounting ledger")
-            st.dataframe(acct_df.sort_values("date", ascending=False), hide_index=True, use_container_width=True)
-
-
-elif st.session_state.current_user["role"] == "worker":
-    inject_custom_bg("worker")
-    current = st.session_state.current_user
-    user_id = str(current["id"])
-    st.sidebar.title("👤 Worker Dashboard")
-    st.sidebar.write(f"Welcome back, **{current['name']}**.")
-    if current.get("is_phased"):
-        st.sidebar.warning("👁️ ADMIN VIEW MODE")
-        if st.sidebar.button("Return to Admin Dashboard ⚡", type="primary"):
-            st.session_state.current_user = {"role": "admin", "name": "Administrator"}
-            _refresh()
-    elif st.sidebar.button("Log Out 🚪", type="primary"):
-        _logout()
-    st.sidebar.link_button("💬 Contact Administrator", f"https://wa.me/{SUPPORT_NUMBER}", use_container_width=True)
-
-    my_jobs = jobs_df[jobs_df["worker_id"].astype(str) == user_id]
-    paid = my_jobs[my_jobs["status"] == "Paid"]["payout"].sum() if not my_jobs.empty else 0
-    pending = my_jobs[my_jobs["status"].isin(["Selected", "Confirmed", "In Progress", "Completed", "Payment Due"])]["payout"].sum() if not my_jobs.empty else 0
-    c1, c2 = st.columns(2)
-    c1.metric("💵 Total Earnings (Paid)", f"Ksh {paid:,.2f}")
-    c2.metric("📊 Pending Balance", f"Ksh {pending:,.2f}")
-    st.subheader("💼 Available Jobs")
-    available = jobs_df[jobs_df["status"].isin(["Open", "Applied"])]
-    for _, job in available.iterrows():
-        if not pd.isna(job.get("title")):
-            with st.container(border=True):
-                st.markdown(f"### {job['title']}")
-                st.write(job.get("description") or job.get("instructions", ""))
-                st.caption(f"Client: {get_client_name(job['client_id'])} | Due: {job['due_date']} | Pay: Ksh {job['payout']:,.2f}")
-                applications = _job_applications(job)
-                already_applied = any(str(app.get("worker_id")) == user_id for app in applications)
-                if not already_applied and not (job["worker_id"] and job["status"] != "Open"):
-                    if st.button("Apply for this job ✅", key=f"apply_{job['id']}"):
-                        applications.append({"worker_id": user_id, "name": current["name"], "applied_at": datetime.now(KISUMU_TZ).isoformat(), "status": "Pending"})
-                        jobs_df.loc[jobs_df["id"] == job["id"], "applications"] = _encode_applications(applications)
-                        jobs_df.loc[jobs_df["id"] == job["id"], "status"] = "Applied"
-                        save_jobs(jobs_df)
+                selected = employers_df[employers_df["name"] == edit_name].iloc[0]
+                with st.form("edit_employer_form"):
+                    edit_verification = st.selectbox(
+                        "Employer verification",
+                        ["Pending", "Verified"],
+                        index=0 if str(selected["verification_status"]).lower() != "verified" else 1,
+                    )
+                    edit_accreditation = st.selectbox(
+                        "Employer accreditation",
+                        ["Pending", "Accredited"],
+                        index=0 if str(selected["accreditation_status"]).lower() != "accredited" else 1,
+                    )
+                    edit_accreditation_id = st.text_input(
+                        "Employer accreditation ID",
+                        value=str(selected.get("accreditation_id", "")),
+                    )
+                    edit_active = st.selectbox(
+                        "Employer account active", ["Yes", "No"],
+                        index=0 if _active(selected) else 1,
+                    )
+                    if st.form_submit_button("Save Employer Account"):
+                        employers_df.loc[
+                            employers_df["id"] == selected["id"],
+                            ["verification_status", "accreditation_status", "accreditation_id", "active"],
+                        ] = [
+                            edit_verification, edit_accreditation,
+                            edit_accreditation_id, edit_active,
+                        ]
+                        save_employers(employers_df)
                         _refresh()
-    st.subheader("My Accepted Jobs")
-    for _, job in my_jobs.iterrows():
-        with st.container(border=True):
-            st.markdown(f"**{job['title']}** — {job['status']}")
-            st.caption(f"Due: {job['due_date']} | Expected payout: Ksh {job['payout']:,.2f}")
-            if job["status"] == "Selected":
-                if st.button("Confirm availability ✅", key=f"confirm_{job['id']}"):
-                    jobs_df.loc[jobs_df["id"] == job["id"], "status"] = "Confirmed"
-                    save_jobs(jobs_df)
-                    _refresh()
-            elif job["status"] == "Confirmed":
-                if st.button("Start job 🏃", key=f"start_{job['id']}"):
-                    jobs_df.loc[jobs_df["id"] == job["id"], "status"] = "In Progress"
-                    save_jobs(jobs_df)
-                    _refresh()
-            elif job["status"] == "In Progress":
-                if st.button("Mark job complete ✔️", key=f"done_{job['id']}"):
-                    jobs_df.loc[jobs_df["id"] == job["id"], "status"] = "Completed"
-                    jobs_df.loc[jobs_df["id"] == job["id"], "time_marked_done"] = datetime.now(KISUMU_TZ).strftime("%Y-%m-%d %H:%M:%S")
-                    save_jobs(jobs_df)
-                    _refresh()
-            elif job["status"] == "Completed":
-                st.info("Completed — awaiting client payment.")
-            elif job["status"] == "Paid":
-                st.success("Paid ✅")
+        with seeker_col:
+            st.subheader("➕ Add Job Seeker")
+            with st.form("add_seeker_form"):
+                name = st.text_input("Full name")
+                username = st.text_input("Job seeker username")
+                password = st.text_input("Job seeker password", type="password")
+                phone = st.text_input("Job seeker phone")
+                skills = st.text_input("Skills and experience")
+                verification = st.selectbox("Verification status", ["Pending", "Verified"])
+                accreditation = st.selectbox("Accreditation status", ["Pending", "Accredited"])
+                accreditation_id = st.text_input("Job seeker accreditation ID")
+                if st.form_submit_button("Add Job Seeker"):
+                    usernames = set(job_seekers_df["username"]) | set(employers_df["username"])
+                    if not all([name, username, password, phone]):
+                        st.error("Name, username, password and phone are required.")
+                    elif username in usernames:
+                        st.error("Username already taken.")
+                    elif accreditation == "Accredited" and not accreditation_id.strip():
+                        st.error("An accreditation ID is required for an accredited job seeker.")
+                    else:
+                        job_seekers_df = pd.concat([job_seekers_df, pd.DataFrame([{
+                            "id": f"job-seeker-{int(time.time())}", "name": name,
+                            "username": username, "password": password, "phone": phone,
+                            "skills": skills, "verification_status": verification,
+                            "accreditation_status": accreditation,
+                            "accreditation_id": accreditation_id, "active": "Yes",
+                        }])], ignore_index=True)
+                        save_job_seekers(job_seekers_df)
+                        st.success("Job seeker added.")
+                        _refresh()
+            st.dataframe(
+                job_seekers_df.drop(columns=["password"], errors="ignore"),
+                hide_index=True, use_container_width=True,
+            )
+            if not job_seekers_df.empty:
+                edit_name = st.selectbox(
+                    "Job seeker account to manage", job_seekers_df["name"].tolist(),
+                    key="edit_seeker_name",
+                )
+                selected = job_seekers_df[job_seekers_df["name"] == edit_name].iloc[0]
+                with st.form("edit_seeker_form"):
+                    edit_verification = st.selectbox(
+                        "Job seeker verification",
+                        ["Pending", "Verified"],
+                        index=0 if str(selected["verification_status"]).lower() != "verified" else 1,
+                    )
+                    edit_accreditation = st.selectbox(
+                        "Job seeker accreditation",
+                        ["Pending", "Accredited"],
+                        index=0 if str(selected["accreditation_status"]).lower() != "accredited" else 1,
+                    )
+                    edit_accreditation_id = st.text_input(
+                        "Job seeker accreditation ID",
+                        value=str(selected.get("accreditation_id", "")),
+                    )
+                    edit_active = st.selectbox(
+                        "Job seeker account active", ["Yes", "No"],
+                        index=0 if _active(selected) else 1,
+                    )
+                    if st.form_submit_button("Save Job Seeker Account"):
+                        job_seekers_df.loc[
+                            job_seekers_df["id"] == selected["id"],
+                            ["verification_status", "accreditation_status", "accreditation_id", "active"],
+                        ] = [
+                            edit_verification, edit_accreditation,
+                            edit_accreditation_id, edit_active,
+                        ]
+                        save_job_seekers(job_seekers_df)
+                        _refresh()
+    else:
+        st.title("Vacancy Management")
+        employer_options = {
+            row["name"]: row["id"]
+            for _, row in employers_df[employers_df.apply(_verified, axis=1)].iterrows()
+        }
+        with st.form("admin_post_vacancy_form"):
+            title = st.text_input("Vacancy title")
+            description = st.text_area("Role description")
+            requirements = st.text_area("Requirements and qualifications")
+            employment_type = st.selectbox(
+                "Employment type", ["Full-time", "Part-time", "Contract", "Temporary", "Internship"]
+            )
+            location = st.text_input("Location / work arrangement")
+            salary = st.text_input("Salary / compensation")
+            deadline = st.date_input("Application deadline")
+            employer_name = st.selectbox("Employer", list(employer_options) or ["No verified employers"])
+            post = st.form_submit_button("Publish Vacancy", type="primary")
+        if post:
+            if not title.strip() or not description.strip() or not employer_options:
+                st.error("A title, description and verified employer are required.")
+            else:
+                vacancies_df = pd.concat([vacancies_df, pd.DataFrame([_new_vacancy_row(
+                    id=_job_id(), title=title.strip(), employer_id=employer_options[employer_name],
+                    description=description, requirements=requirements,
+                    employment_type=employment_type, location=location, salary=salary,
+                    application_deadline=str(deadline), status="Open",
+                )])], ignore_index=True)
+                save_vacancies(vacancies_df)
+                st.success("Vacancy published.")
+                _refresh()
+        st.dataframe(
+            vacancies_df[["id", "title", "employer_id", "employment_type", "location",
+                          "salary", "application_deadline", "status"]],
+            hide_index=True, use_container_width=True,
+        )
 
 
-elif st.session_state.current_user["role"] == "client":
-    inject_custom_bg("client")
+elif st.session_state.current_user["role"] == "employer":
+    inject_custom_bg("employer")
     current = st.session_state.current_user
-    client_id = str(current["id"])
-    st.sidebar.title("🏢 Client Dashboard")
+    employer_id = str(current["id"])
+    st.sidebar.title("🏢 Employer Dashboard")
     st.sidebar.write(f"Welcome, **{current['name']}**.")
     if current.get("is_phased"):
         st.sidebar.warning("👁️ ADMIN VIEW MODE")
@@ -671,56 +660,145 @@ elif st.session_state.current_user["role"] == "client":
         _logout()
     st.sidebar.link_button("💬 Contact Administrator", f"https://wa.me/{SUPPORT_NUMBER}", use_container_width=True)
 
-    st.title("Client Job Centre")
-    with st.expander("➕ Post a New Job", expanded=True):
-        with st.form("client_post_job_form"):
-            title = st.text_input("Job title")
-            description = st.text_area("Describe the work and requirements")
-            hours = st.number_input("Estimated hours", min_value=0.5, value=1.0, step=0.5)
-            worker_rate = st.number_input("Worker pay (Ksh/hr)", min_value=0.0, value=150.0, step=10.0)
-            client_rate = st.number_input("Your quoted bill (Ksh/hr)", min_value=0.0, value=250.0, step=10.0)
-            due_date = st.date_input("Due date")
-            due_time = st.time_input("Due time")
-            if st.form_submit_button("Post Job 🚀", type="primary"):
+    st.title("Post and manage vacancies")
+    with st.expander("➕ Publish a New Vacancy", expanded=True):
+        with st.form("employer_post_vacancy_form"):
+            title = st.text_input("Vacancy title")
+            description = st.text_area("Role description")
+            requirements = st.text_area("Requirements and qualifications")
+            employment_type = st.selectbox(
+                "Employment type", ["Full-time", "Part-time", "Contract", "Temporary", "Internship"]
+            )
+            location = st.text_input("Location / work arrangement")
+            salary = st.text_input("Salary / compensation")
+            deadline = st.date_input("Application deadline")
+            if st.form_submit_button("Publish Vacancy 🚀", type="primary"):
                 if not title.strip() or not description.strip():
-                    st.error("A title and description are required.")
+                    st.error("A title and role description are required.")
                 else:
-                    jobs_df = pd.concat([jobs_df, pd.DataFrame([{
-                        "id": _job_id(), "title": title.strip(), "client_id": client_id, "worker_id": "",
-                        "description": description, "instructions": description, "hours": hours, "rate": worker_rate,
-                        "client_rate": client_rate, "status": "Open",
-                        "date_posted": datetime.now(KISUMU_TZ).strftime("%Y-%m-%d %H:%M:%S"),
-                        "due_date": f"{due_date} {due_time}", "payout": hours * worker_rate,
-                        "total_bill": hours * client_rate, "payment_status": "Unpaid", "applications": "[]",
-                    }])], ignore_index=True)
-                    save_jobs(jobs_df)
+                    vacancies_df = pd.concat([vacancies_df, pd.DataFrame([_new_vacancy_row(
+                        id=_job_id(), title=title.strip(), employer_id=employer_id,
+                        description=description, requirements=requirements,
+                        employment_type=employment_type, location=location, salary=salary,
+                        application_deadline=str(deadline), status="Open",
+                    )])], ignore_index=True)
+                    save_vacancies(vacancies_df)
+                    st.success("Vacancy published.")
                     _refresh()
 
-    my_jobs = jobs_df[jobs_df["client_id"].astype(str) == client_id]
-    if my_jobs.empty:
-        st.info("You have not posted any jobs.")
-    for _, job in my_jobs.iterrows():
+    my_vacancies = vacancies_df[vacancies_df["employer_id"].astype(str) == employer_id]
+    if my_vacancies.empty:
+        st.info("You have not published any vacancies.")
+    for _, vacancy in my_vacancies.iterrows():
         with st.container(border=True):
-            st.markdown(f"### {job['title']} · {job['status']}")
-            st.caption(f"Due: {job['due_date']} | Invoice total: Ksh {job['total_bill']:,.2f}")
-            applications = _job_applications(job)
-            if applications and job["status"] in ["Open", "Applied"]:
+            st.markdown(f"### {vacancy['title']} · {vacancy['status']}")
+            st.write(vacancy.get("description", ""))
+            st.caption(
+                f"{vacancy.get('employment_type', '')} · {vacancy.get('location', '')} · "
+                f"Salary/compensation: {vacancy.get('salary', 'Not specified')} · "
+                f"Deadline: {vacancy.get('application_deadline', 'Not specified')}"
+            )
+            applications = _application_statuses(vacancy)
+            if applications:
                 st.write("**Applications**")
                 for application in applications:
-                    worker_id = str(application.get("worker_id", ""))
-                    st.write(f"• {application.get('name', get_worker_name(worker_id))} — {application.get('status', 'Pending')}")
-                    if application.get("status") != "Selected" and st.button("Select worker", key=f"select_{job['id']}_{worker_id}"):
-                        for item in applications:
-                            item["status"] = "Selected" if str(item.get("worker_id")) == worker_id else "Declined"
-                        jobs_df.loc[jobs_df["id"] == job["id"], ["applications", "worker_id", "status"]] = [_encode_applications(applications), worker_id, "Selected"]
-                        save_jobs(jobs_df)
-                        _refresh()
-            if job["status"] in ["Completed", "Payment Due"]:
-                st.info("Job complete. Please settle the invoice.")
-                if st.button("Pay invoice 💳", key=f"pay_{job['id']}", type="primary"):
-                    jobs_df.loc[jobs_df["id"] == job["id"], ["status", "payment_status", "invoice_id"]] = ["Paid", "Paid", f"INV-{job['id']}"]
-                    save_jobs(jobs_df)
-                    _add_accounting(f"Client payment for {job['title']}", job["total_bill"], "Income", job["id"], client_id)
+                    seeker_id = _application_seeker_id(application)
+                    seeker_name = application.get("name", get_job_seeker_name(seeker_id))
+                    app_status = application.get("status", "Applied")
+                    st.write(f"• {seeker_name} — {app_status}")
+                    action_col, reject_col = st.columns(2)
+                    if app_status in {"Applied", "Pending"}:
+                        if action_col.button("Shortlist", key=f"shortlist_{vacancy['id']}_{seeker_id}"):
+                            application["status"] = "Shortlisted"
+                            vacancies_df.loc[vacancies_df["id"] == vacancy["id"], ["applications", "status"]] = [
+                                _encode_applications(applications), "Shortlisted"
+                            ]
+                            save_vacancies(vacancies_df)
+                            _refresh()
+                        if reject_col.button("Reject", key=f"reject_{vacancy['id']}_{seeker_id}"):
+                            application["status"] = "Rejected"
+                            vacancies_df.loc[vacancies_df["id"] == vacancy["id"], "applications"] = _encode_applications(applications)
+                            save_vacancies(vacancies_df)
+                            _refresh()
+                    elif app_status == "Shortlisted":
+                        if action_col.button("Hire", key=f"hire_{vacancy['id']}_{seeker_id}", type="primary"):
+                            for item in applications:
+                                if _application_seeker_id(item) == seeker_id:
+                                    item["status"] = "Hired"
+                                elif item.get("status") not in {"Withdrawn", "Rejected"}:
+                                    item["status"] = "Rejected"
+                            vacancies_df.loc[vacancies_df["id"] == vacancy["id"], ["applications", "job_seeker_id", "status"]] = [
+                                _encode_applications(applications), seeker_id, "Hired"
+                            ]
+                            save_vacancies(vacancies_df)
+                            _refresh()
+            if vacancy["status"] != "Closed":
+                if st.button("Close vacancy", key=f"close_{vacancy['id']}"):
+                    for item in applications:
+                        if item.get("status") in {"Applied", "Pending", "Shortlisted"}:
+                            item["status"] = "Rejected"
+                    vacancies_df.loc[vacancies_df["id"] == vacancy["id"], ["applications", "status"]] = [
+                        _encode_applications(applications), "Closed"
+                    ]
+                    save_vacancies(vacancies_df)
                     _refresh()
-            elif job["status"] == "Paid":
-                st.success(f"Invoice {job.get('invoice_id') or job['id']} paid ✅")
+
+
+elif st.session_state.current_user["role"] == "job_seeker":
+    inject_custom_bg("job_seeker")
+    current = st.session_state.current_user
+    seeker_id = str(current["id"])
+    st.sidebar.title("👤 Job Seeker Dashboard")
+    st.sidebar.write(f"Welcome, **{current['name']}**.")
+    if current.get("is_phased"):
+        st.sidebar.warning("👁️ ADMIN VIEW MODE")
+        if st.sidebar.button("Return to Admin Dashboard ⚡", type="primary"):
+            st.session_state.current_user = {"role": "admin", "name": "Administrator"}
+            _refresh()
+    elif st.sidebar.button("Log Out 🚪", type="primary"):
+        _logout()
+    st.sidebar.link_button("💬 Contact Administrator", f"https://wa.me/{SUPPORT_NUMBER}", use_container_width=True)
+
+    st.title("Browse employment opportunities")
+    available = vacancies_df[vacancies_df["status"].isin(["Open", "Applications"])]
+    for _, vacancy in available.iterrows():
+        with st.container(border=True):
+            st.markdown(f"### {vacancy['title']}")
+            st.write(vacancy.get("description", ""))
+            st.write(f"**Requirements:** {vacancy.get('requirements', 'Not specified')}")
+            st.caption(
+                f"Employer: {get_employer_name(vacancy['employer_id'])} · "
+                f"{vacancy.get('employment_type', '')} · {vacancy.get('location', '')} · "
+                f"Salary/compensation: {vacancy.get('salary', 'Not specified')} · "
+                f"Apply by: {vacancy.get('application_deadline', 'Not specified')}"
+            )
+            applications = _application_statuses(vacancy)
+            existing = next((app for app in applications if _application_for(app, seeker_id)), None)
+            deadline_passed = _deadline_passed(vacancy.get("application_deadline", ""))
+            if existing:
+                st.info(f"Application status: {existing.get('status', 'Applied')}")
+                if existing.get("status") in {"Applied", "Pending", "Shortlisted"}:
+                    if st.button("Withdraw application", key=f"withdraw_{vacancy['id']}"):
+                        existing["status"] = "Withdrawn"
+                        vacancies_df.loc[vacancies_df["id"] == vacancy["id"], "applications"] = _encode_applications(applications)
+                        save_vacancies(vacancies_df)
+                        _refresh()
+            elif deadline_passed:
+                st.warning("The application deadline has passed.")
+            elif st.button("Apply for this vacancy ✅", key=f"apply_{vacancy['id']}"):
+                applications.append({
+                    "job_seeker_id": seeker_id, "name": current["name"],
+                    "applied_at": datetime.now(KISUMU_TZ).isoformat(), "status": "Applied",
+                })
+                vacancies_df.loc[vacancies_df["id"] == vacancy["id"], ["applications", "status"]] = [
+                    _encode_applications(applications), "Applications"
+                ]
+                save_vacancies(vacancies_df)
+                _refresh()
+
+    st.subheader("My applications")
+    for _, vacancy in vacancies_df.iterrows():
+        applications = _application_statuses(vacancy)
+        mine = next((app for app in applications if _application_for(app, seeker_id)), None)
+        if mine:
+            st.write(f"**{vacancy['title']}** — {mine.get('status', 'Applied')} ({vacancy['status']})")

@@ -1,15 +1,13 @@
-"""WhatsApp notifier for the SSS job connection platform.
+"""WhatsApp notifications for the SSS employment portal.
 
-The service is intentionally best-effort: a failed notification is logged and
-its sheet marker is not written, so the next scheduled run can retry it.
-Credentials are read only from environment variables or a service-account
-file; none are included in messages or logs.
+The notifier is best-effort.  A marker is written only after a message is
+sent, allowing a later scan to retry failed notifications.  ``Workers`` and
+``Clients`` remain supported as legacy worksheet titles.
 """
 
 import json
 import os
 import time
-from datetime import datetime, timedelta
 
 import gspread
 import pandas as pd
@@ -27,26 +25,22 @@ SHEET_URL = os.getenv(
     "SHEET_URL",
     "https://docs.google.com/spreadsheets/d/1lwK7P0Ul32suA1tOJMwrvPwawkMcVXIz5zNECVeUtfQ/edit?usp=sharing",
 )
-KISUMU_TZ = pytz.timezone("Africa/Nairobi")
 ADMIN_CONTACT = os.getenv("ADMIN_CONTACT", "0799084376")
 PORTAL_URL = os.getenv("PORTAL_URL", "https://3wfppg3ykc6sulf5tclxdp.streamlit.app/")
 
-JOB_HEADERS = [
-    "id", "title", "client_id", "worker_id", "description", "instructions",
-    "hours", "rate", "client_rate", "status", "date_posted", "due_date",
-    "time_marked_done", "payout", "total_bill", "payment_status", "invoice_id",
-    "applications", "application_deadline", "cancel_reason",
-    "msg_posted", "msg_application", "msg_selected", "msg_allocated",
-    "msg_night_before", "msg_1hr_before", "msg_late", "msg_completed",
-    "msg_payment", "msg_admin_cancelled",
+VACANCY_HEADERS = [
+    "id", "title", "employer_id", "job_seeker_id", "description", "requirements",
+    "employment_type", "location", "salary", "application_deadline", "status",
+    "date_posted", "applications", "cancel_reason", "msg_posted",
+    "msg_application", "msg_shortlisted", "msg_hired", "msg_rejected", "msg_closed",
 ]
+ACCEPTED = {"verified", "accredited", "approved", "yes", "true", "1"}
 
 
 def send_whatsapp_msg(phone, message):
     """Send one text message through Meta's official Cloud API."""
     phone = str(phone or "").strip()
     if not phone or phone.lower() in {"nan", "none"}:
-        print("No valid phone number provided.")
         return False
     token = os.getenv("WA_TOKEN")
     phone_id = os.getenv("WA_PHONE_ID")
@@ -89,15 +83,17 @@ def _load_workbook():
         return None
 
 
-def _records(workbook, title):
-    try:
-        return pd.DataFrame(workbook.worksheet(title).get_all_records())
-    except gspread.exceptions.WorksheetNotFound:
-        print(f"Required worksheet is missing: {title}")
-        return pd.DataFrame()
-    except gspread.exceptions.GSpreadException as exc:
-        print(f"Could not read worksheet {title}: {exc}")
-        return pd.DataFrame()
+def _records(workbook, *titles):
+    for title in titles:
+        try:
+            return pd.DataFrame(workbook.worksheet(title).get_all_records())
+        except gspread.exceptions.WorksheetNotFound:
+            continue
+        except gspread.exceptions.GSpreadException as exc:
+            print(f"Could not read worksheet {title}: {exc}")
+            return pd.DataFrame()
+    print(f"Required worksheet is missing: {titles[0]}")
+    return pd.DataFrame()
 
 
 def _value(row, field, default=""):
@@ -107,57 +103,78 @@ def _value(row, field, default=""):
 
 def _applications(value):
     try:
-        parsed = json.loads(str(value)) if value and str(value) != "nan" else []
+        parsed = json.loads(str(value)) if value and str(value).lower() != "nan" else []
         return parsed if isinstance(parsed, list) else []
     except (ValueError, TypeError):
         return []
 
 
-def _person(frame, person_id, fallback):
+def _person(frame, person_id):
     if frame.empty or "id" not in frame:
         return None
     match = frame[frame["id"].astype(str) == str(person_id)]
     return match.iloc[0] if not match.empty else None
 
 
+def _verified(person):
+    if person is None:
+        return False
+    return (
+        str(person.get("verification_status", "")).lower() in ACCEPTED
+        and str(person.get("accreditation_status", "")).lower() in ACCEPTED
+        and str(person.get("active", "Yes")).lower() not in {"no", "false", "0"}
+    )
+
+
 def _phone(frame, person_id):
-    person = _person(frame, person_id, "")
+    person = _person(frame, person_id)
     return str(person.get("phone", "")) if person is not None else ""
 
 
 def _name(frame, person_id, fallback):
-    person = _person(frame, person_id, fallback)
+    person = _person(frame, person_id)
     return str(person.get("name", fallback)) if person is not None else fallback
 
 
-def _parse_due(value):
-    if not value or str(value).lower() in {"nan", "none"}:
-        return None
-    text = str(value)
-    for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
-        try:
-            return KISUMU_TZ.localize(datetime.strptime(text, pattern))
-        except ValueError:
-            continue
-    return None
+def _seeker_id(application):
+    return str(application.get("job_seeker_id", application.get("worker_id", "")))
+
+
+def _canonical_status(value):
+    value = str(value or "").strip()
+    return {
+        "open": "Open",
+        "applied": "Applications",
+        "applications": "Applications",
+        "selected": "Shortlisted",
+        "shortlisted": "Shortlisted",
+        "confirmed": "Hired",
+        "hired": "Hired",
+        "in progress": "Hired",
+        "completed": "Closed",
+        "payment due": "Closed",
+        "paid": "Closed",
+        "cancelled": "Closed",
+        "closed": "Closed",
+        "withdrawn": "Withdrawn",
+        "rejected": "Rejected",
+    }.get(value.lower(), value or "Open")
 
 
 def _save_jobs(ws, jobs):
-    """Persist notification markers while retaining any new job columns."""
     jobs = jobs.fillna("")
     ws.clear()
     ws.update([jobs.columns.tolist()] + jobs.astype(object).values.tolist())
 
 
 def job_scan():
-    """Scan Jobs and emit posting, application, selection and job reminders."""
-    print("Scanning SSS job database...")
+    """Announce vacancies and hiring lifecycle changes, not execution or financial reminders."""
+    print("Scanning SSS employment database...")
     workbook = _load_workbook()
     if workbook is None:
         return
-    workers = _records(workbook, "Workers")
-    clients = _records(workbook, "Clients")
-    jobs_ws = None
+    job_seekers = _records(workbook, "Workers", "Job Seekers")
+    employers = _records(workbook, "Clients", "Employers")
     try:
         jobs_ws = workbook.worksheet("Jobs")
     except gspread.exceptions.WorksheetNotFound:
@@ -165,130 +182,145 @@ def job_scan():
         return
     jobs = pd.DataFrame(jobs_ws.get_all_records())
     if jobs.empty:
-        print("No jobs found.")
+        print("No vacancies found.")
         return
-    for header in JOB_HEADERS:
+    for header in VACANCY_HEADERS:
         if header not in jobs.columns:
             jobs[header] = ""
-    jobs["client_id"] = jobs["client_id"].fillna("").astype(str)
-    jobs["worker_id"] = jobs["worker_id"].fillna("").astype(str)
-    now = datetime.now(KISUMU_TZ)
-    updates_made = False
+    for index, row in jobs.iterrows():
+        title = str(_value(row, "title", "Untitled vacancy"))
+        status = _canonical_status(_value(row, "status", "Open"))
+        employer_id = str(_value(row, "employer_id", _value(row, "client_id")))
+        employer = _person(employers, employer_id)
+        if not _verified(employer):
+            continue
+        employer_name = _name(employers, employer_id, "Employer")
+        employer_phone = _phone(employers, employer_id)
+        applications = _applications(_value(row, "applications"))
+        updates_made = False
 
-    for index, job in jobs.iterrows():
-        job_id = str(_value(job, "id", index))
-        title = str(_value(job, "title", "Untitled job"))
-        status = str(_value(job, "status", ""))
-        client_id = str(_value(job, "client_id"))
-        worker_id = str(_value(job, "worker_id"))
-        payment_status = str(_value(job, "payment_status"))
-        client_name = _name(clients, client_id, "Client")
-        worker_name = _name(workers, worker_id, "Worker")
-        client_phone = _phone(clients, client_id)
-        worker_phone = _phone(workers, worker_id)
-
-        # Notify all active workers once when a client/admin posts a job.
-        if status in {"Open", "Applied"} and not _value(job, "msg_posted"):
+        # Announce a new vacancy only to active, verified and accredited seekers.
+        if status in {"Open", "Applications"} and not _value(row, "msg_posted"):
             sent_any = False
-            if not workers.empty:
-                for _, worker in workers.iterrows():
-                    active = str(worker.get("active", "Yes")).lower()
-                    if active not in {"no", "false", "0"}:
-                        sent_any = send_whatsapp_msg(
-                            worker.get("phone", ""),
-                            f"📢 *New Job Posting*\nHello {worker.get('name', 'Worker')}, "
-                            f"*{title}* is available from {client_name}.\nDue: {_value(job, 'due_date', 'TBC')}.\n"
-                            f"Apply in the portal: {PORTAL_URL}",
-                        ) or sent_any
-            if client_phone:
+            for _, seeker in job_seekers.iterrows():
+                if _verified(seeker):
+                    sent_any = send_whatsapp_msg(
+                        seeker.get("phone", ""),
+                        f"📢 *New Employment Vacancy*\nHello {seeker.get('name', 'Job seeker')}, "
+                        f"*{title}* is available from {employer_name}.\n"
+                        f"Employment: {_value(row, 'employment_type', 'Not specified')} | "
+                        f"Location: {_value(row, 'location', 'Not specified')}\n"
+                        f"Salary/compensation: {_value(row, 'salary', 'Not specified')}\n"
+                        f"Apply by: {_value(row, 'application_deadline', 'Not specified')}.\n"
+                        f"Apply in the portal: {PORTAL_URL}",
+                    ) or sent_any
+            if employer_phone:
                 sent_any = send_whatsapp_msg(
-                    client_phone,
-                    f"📌 *Job Posted*\nYour job *{title}* is now visible to verified workers.\n"
-                    f"Track applications in the portal: {PORTAL_URL}",
+                    employer_phone,
+                    f"📌 *Vacancy Published*\nYour vacancy *{title}* is now visible "
+                    f"to verified and accredited job seekers.\n{PORTAL_URL}",
                 ) or sent_any
-            if sent_any or workers.empty:
+            if sent_any or job_seekers.empty:
                 jobs.at[index, "msg_posted"] = "Yes"
                 updates_made = True
 
-        # One notification per scan cycle is enough for a new application.
-        applications = _applications(_value(job, "applications"))
-        pending_apps = [app for app in applications if str(app.get("status", "Pending")) == "Pending"]
-        if pending_apps and client_phone and not _value(job, "msg_application"):
-            applicant_names = ", ".join(str(app.get("name", "Worker")) for app in pending_apps)
+        pending = [
+            app for app in applications
+            if str(app.get("status", "Applied")) in {"Applied", "Pending"}
+            and _verified(_person(job_seekers, _seeker_id(app)))
+        ]
+        if pending and employer_phone and not _value(row, "msg_application"):
+            names = ", ".join(str(app.get("name", "Job seeker")) for app in pending)
             if send_whatsapp_msg(
-                client_phone,
-                f"📝 *New Job Application*\n{applicant_names} applied for *{title}*.\n"
-                f"Review applications in the SSS portal: {PORTAL_URL}",
+                employer_phone,
+                f"📝 *New Vacancy Application*\n{names} applied for *{title}*.\n"
+                f"Review applications in the portal: {PORTAL_URL}",
             ):
                 jobs.at[index, "msg_application"] = "Yes"
                 updates_made = True
 
-        # Selection/assignment notification goes to both sides.
-        if worker_id and status in {"Selected", "Confirmed"} and not _value(job, "msg_selected"):
-            sent = send_whatsapp_msg(
-                worker_phone,
-                f"🎉 *Worker Selected*\nHello {worker_name}, {client_name} selected you for "
-                f"*{title}*, due {_value(job, 'due_date', 'TBC')}.\nConfirm in the portal: {PORTAL_URL}",
-            )
-            sent = send_whatsapp_msg(
-                client_phone,
-                f"✅ *Worker Selection Confirmed*\n{worker_name} is assigned to *{title}*.\n"
-                f"Track the job in the portal: {PORTAL_URL}",
-            ) or sent
+        shortlisted = [
+            app for app in applications if str(app.get("status")) == "Shortlisted"
+        ]
+        if shortlisted and not _value(row, "msg_shortlisted"):
+            sent = False
+            for app in shortlisted:
+                seeker = _person(job_seekers, _seeker_id(app))
+                if _verified(seeker):
+                    sent = send_whatsapp_msg(
+                        seeker.get("phone", ""),
+                        f"⭐ *Application Shortlisted*\nYour application for *{title}* "
+                        f"with {employer_name} was shortlisted.\n{PORTAL_URL}",
+                    ) or sent
             if sent:
-                jobs.at[index, "msg_selected"] = "Yes"
-                jobs.at[index, "msg_allocated"] = "Yes"
+                jobs.at[index, "msg_shortlisted"] = "Yes"
                 updates_made = True
 
-        # Completed jobs prompt the client to pay; paid jobs close the loop.
-        if status in {"Completed", "Payment Due"} and not _value(job, "msg_completed"):
-            if send_whatsapp_msg(
-                client_phone,
-                f"✔️ *Job Completed*\n{worker_name} marked *{title}* complete.\n"
-                f"Invoice total: Ksh {_value(job, 'total_bill', '0')}.\nPlease review and pay in the portal.",
-            ):
-                jobs.at[index, "msg_completed"] = "Yes"
-                updates_made = True
-        if (status == "Paid" or payment_status == "Paid") and not _value(job, "msg_payment"):
-            sent = send_whatsapp_msg(
-                worker_phone,
-                f"💰 *Payment Released*\nPayment for *{title}* from {client_name} has been recorded.\n"
-                f"Amount: Ksh {_value(job, 'payout', '0')}.",
-            )
+        hired = [
+            app for app in applications if str(app.get("status")) == "Hired"
+        ]
+        if hired and not _value(row, "msg_hired"):
+            sent = False
+            for app in hired:
+                seeker = _person(job_seekers, _seeker_id(app))
+                if _verified(seeker):
+                    sent = send_whatsapp_msg(
+                        seeker.get("phone", ""),
+                        f"🎉 *You Have Been Hired*\n{employer_name} hired you for *{title}*.\n"
+                        f"Please review the employment details: {PORTAL_URL}",
+                    ) or sent
+            if employer_phone:
+                sent = send_whatsapp_msg(
+                    employer_phone,
+                    f"✅ *Job Seeker Hired*\nThe hiring decision for *{title}* is recorded.\n"
+                    f"Manage the vacancy: {PORTAL_URL}",
+                ) or sent
             if sent:
-                jobs.at[index, "msg_payment"] = "Yes"
+                jobs.at[index, "msg_hired"] = "Yes"
                 updates_made = True
 
-        # Cancellation is an administrative alert, independent of reminders.
-        if status == "Cancelled" and _value(job, "cancel_reason") and not _value(job, "msg_admin_cancelled"):
-            if send_whatsapp_msg(
-                ADMIN_CONTACT,
-                f"🚨 *Job Cancellation Alert*\nWorker: {worker_name}\nClient: {client_name}\n"
-                f"Job: {title}\nReason: {_value(job, 'cancel_reason')}",
-            ):
-                jobs.at[index, "msg_admin_cancelled"] = "Yes"
-                updates_made = True
-            continue
-
-        # Job-centric schedule reminders and late alerts.
-        due = _parse_due(_value(job, "due_date"))
-        if due is None or not worker_phone or status not in {"Selected", "Confirmed", "In Progress"}:
-            continue
-        time_diff = due - now
-        if timedelta(hours=12) < time_diff <= timedelta(hours=24) and not _value(job, "msg_night_before"):
-            if send_whatsapp_msg(worker_phone, f"🌙 *Job Reminder*\n{title} is scheduled tomorrow at {due.strftime('%I:%M %p')}."):
-                jobs.at[index, "msg_night_before"] = "Yes"
-                updates_made = True
-        if timedelta(minutes=0) < time_diff <= timedelta(hours=1) and not _value(job, "msg_1hr_before"):
-            if send_whatsapp_msg(worker_phone, f"⏳ *1 Hour Reminder*\nPlease prepare for *{title}*.\n{PORTAL_URL}"):
-                jobs.at[index, "msg_1hr_before"] = "Yes"
-                updates_made = True
-        if time_diff < timedelta(minutes=-30) and status in {"Selected", "Confirmed"} and not _value(job, "msg_late"):
-            if send_whatsapp_msg(worker_phone, f"🚩 *Job Overdue*\nYou are over 30 minutes late for *{title}*. Please update the portal."):
-                jobs.at[index, "msg_late"] = "Yes"
+        rejected = [
+            app for app in applications if str(app.get("status")) == "Rejected"
+        ]
+        if rejected and not _value(row, "msg_rejected"):
+            sent = False
+            for app in rejected:
+                seeker = _person(job_seekers, _seeker_id(app))
+                if _verified(seeker):
+                    sent = send_whatsapp_msg(
+                        seeker.get("phone", ""),
+                        f"ℹ️ *Application Update*\nYour application for *{title}* "
+                        f"was not selected. Please browse other verified opportunities: {PORTAL_URL}",
+                    ) or sent
+            if sent:
+                jobs.at[index, "msg_rejected"] = "Yes"
                 updates_made = True
 
-    if updates_made:
+        if status == "Closed" and not _value(row, "msg_closed"):
+            sent = send_whatsapp_msg(
+                employer_phone,
+                f"🔒 *Vacancy Closed*\n*{title}* is now closed in the employment portal.",
+            ) if employer_phone else False
+            for app in applications:
+                if app.get("status") in {"Applied", "Pending", "Shortlisted"}:
+                    seeker = _person(job_seekers, _seeker_id(app))
+                    if _verified(seeker):
+                        sent = send_whatsapp_msg(
+                            seeker.get("phone", ""),
+                            f"🔒 *Vacancy Closed*\nApplications for *{title}* are now closed.",
+                        ) or sent
+            if sent or (employer is None and not applications):
+                jobs.at[index, "msg_closed"] = "Yes"
+                updates_made = True
+
+        if updates_made:
+            jobs.at[index, "status"] = status
+
+    if any(
+        str(jobs.at[index, header]) != str(row.get(header, ""))
+        for index, row in jobs.iterrows()
+        for header in ("msg_posted", "msg_application", "msg_shortlisted", "msg_hired", "msg_rejected", "msg_closed")
+    ):
         try:
             _save_jobs(jobs_ws, jobs)
             print("Notification markers saved.")
@@ -298,7 +330,7 @@ def job_scan():
         print("No new notifications needed.")
 
 
-# Backwards-compatible entry point for scheduled deployments using the old name.
+# Scheduled deployments may still call the old function name.
 task_scan = job_scan
 
 
