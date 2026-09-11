@@ -8,7 +8,7 @@ from google.oauth2.service_account import Credentials
 import urllib.parse
 
 # --- CONFIG & SECRETS SETUP ---
-st.set_page_config(page_title="SSS Hustle Hub", layout="wide", page_icon="🔥", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="SSS Operations Portal", layout="wide", page_icon="", initial_sidebar_state="collapsed")
 
 ADMIN_USER = "admin"
 ADMIN_PASS = "admin@SSS"
@@ -16,11 +16,11 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1lwK7P0Ul32suA1tOJMwrvPwawkM
 SUPPORT_NUMBER = "254799084376" 
 KISUMU_TZ = pytz.timezone('Africa/Nairobi') # East Africa Time (EAT) 
 
-# --- 🛑 CSS INJECTION ENGINE (VIBE THEME) 🛑 ---
+# --- CSS INJECTION ---
 def inject_custom_bg():
     bg_css = """
     <style>
-    /* Clean but chill Slate and Navy theme */
+    /* Slate and navy business theme */
     .stApp { background-color: #f8fafc; color: #1e293b; }
     h1, h2, h3, h4, p, span, div { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     .stButton>button { border-radius: 8px; font-weight: 600; }
@@ -41,7 +41,7 @@ def get_gspread_client():
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(credentials)
     except Exception as e:
-        st.error("Authentication Error: Google Sheets is acting sus. Check the credentials or tell the plug to fix the API. 🛑")
+        st.error("Authentication error: Google Sheets credentials could not be validated. Please review the configured credentials.")
         st.stop()
 
 # --- 🛑 2. MOUNT THE WORKSHEETS (CACHED) 🛑 ---
@@ -51,7 +51,7 @@ def get_worksheets():
     try:
         workbook = client.open_by_url(SHEET_URL)
     except Exception as e:
-        st.error(f"Database Connection Failure. The database ghosted us harder than my ex.\n\nError Details: {e}")
+        st.error(f"Database connection failure. Please verify the configured Google Sheets connection.\n\nError details: {e}")
         st.stop()
         
     def get_or_create(title, headers):
@@ -180,7 +180,7 @@ if last_reset != CURRENT_PERIOD:
         st.rerun()
         
     except Exception as e:
-        st.error(f"Automated Archiving Process Failed. The bot needs a coffee: {e}")
+        st.error(f"The automated archiving process failed. Error details: {e}")
 
 # --- WRITE FUNCTIONS ---
 def save_tasks(df):
@@ -211,9 +211,9 @@ if 'current_user' not in st.session_state:
     st.session_state.current_user = None
 
 def get_employee_name(emp_id):
-    if emps_df.empty: return "Ghost Worker"
+    if emps_df.empty: return "Unknown Employee"
     match = emps_df[emps_df['id'] == str(emp_id)]
-    return match.iloc[0]['name'] if not match.empty else "Ghost Worker"
+    return match.iloc[0]['name'] if not match.empty else "Unknown Employee"
 
 inject_custom_bg()
 
@@ -221,18 +221,18 @@ inject_custom_bg()
 if st.session_state.current_user is None:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<h1 style='text-align: center; margin-top: 10vh;'>🔥 SSS Hustle Hub</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: #64748b; margin-bottom: 30px;'>Comrades only. No ops allowed. 🛑</p>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; margin-top: 10vh;'>SSS Operations Portal</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #64748b; margin-bottom: 30px;'>Authorized personnel only.</p>", unsafe_allow_html=True)
         
         with st.container(border=True):
             with st.form("login_form"):
                 login_user = st.text_input("Username")
                 login_pass = st.text_input("Password", type="password")
-                submitted = st.form_submit_button("Let's Go! 🚀", use_container_width=True, type="primary")
+                submitted = st.form_submit_button("Sign In", use_container_width=True, type="primary")
                 
                 if submitted:
                     if login_user == ADMIN_USER and login_pass == ADMIN_PASS:
-                        st.session_state.current_user = {"role": "admin", "name": "The Big Boss"}
+                        st.session_state.current_user = {"role": "admin", "name": "Administrator"}
                         st.rerun()
                     else:
                         match = emps_df[(emps_df['username'] == login_user) & (emps_df['password'] == login_pass)]
@@ -241,28 +241,28 @@ if st.session_state.current_user is None:
                             st.session_state.current_user = {"role": "employee", "id": emp['id'], "name": emp['name'], "is_phased": False}
                             st.rerun()
                         else:
-                            st.error("Nah fam, those details ain't it. Try again. 🤦‍♂️")
+                            st.error("The credentials provided are invalid. Please try again.")
 
 # --- 2. ADMIN DASHBOARD ---
 elif st.session_state.current_user['role'] == 'admin':
-    st.sidebar.title("🛡️ The Command Center")
+    st.sidebar.title("Administration Portal")
     
     # NAVIGATION MENU
-    admin_view = st.sidebar.radio("Where we heading?", ["🏢 The Hustle Board", "💼 The Bag (Finance)", "✅ Vibe Check (QA)"])
+    admin_view = st.sidebar.radio("Navigation", ["Operations Dashboard", "Finance and Analytics", "Quality Control"])
     
     st.sidebar.write("---")
-    st.sidebar.subheader("👔 The Squad (HR)")
-    with st.sidebar.expander("Add a Hustler ➕"):
+    st.sidebar.subheader("Personnel Management")
+    with st.sidebar.expander("Register Employee"):
         with st.form("add_employee_form"):
             new_emp_name = st.text_input("Full Name")
             new_emp_user = st.text_input("Username")
             new_emp_pass = st.text_input("Password", type="password")
             new_emp_phone = st.text_input("Phone Number", placeholder="e.g. 2547XXXXXXXX")
-            new_emp_skills = st.multiselect("What are they good at?", ["Janitorial", "Deep Cleaning", "Babysitting", "Tutoring", "Event Staff", "Moving", "General"])
-            if st.form_submit_button("Bring 'em In"):
+            new_emp_skills = st.multiselect("Areas of expertise", ["Janitorial", "Deep Cleaning", "Babysitting", "Tutoring", "Event Staff", "Moving", "General"])
+            if st.form_submit_button("Register Employee"):
                 if new_emp_name and new_emp_user and new_emp_pass and new_emp_phone:
                     if not emps_df.empty and new_emp_user in emps_df['username'].values:
-                        st.error("That username is taken, bro. Pick another one.")
+                        st.error("That username is already in use. Please select another username.")
                     else:
                         new_id = f"emp{int(time.time())}"
                         skills_str = ", ".join(new_emp_skills) if new_emp_skills else "General"
@@ -271,17 +271,17 @@ elif st.session_state.current_user['role'] == 'admin':
                         updated_emps_df = pd.concat([emps_df, new_row], ignore_index=True)
                         save_emps(updated_emps_df)
                         
-                        st.success("Boom! New comrade added to the squad. 🎉")
+                        st.success("Employee account created successfully.")
                         st.rerun()
                 else:
-                    st.error("Don't leave fields blank, fill 'em all out!")
+                    st.error("All required fields must be completed.")
 
     st.sidebar.write("---")
     
-    st.sidebar.subheader("👁️ Snoop Mode")
+    st.sidebar.subheader("User Dashboard Preview")
     if not emps_df.empty:
-        phase_target = st.sidebar.selectbox("See what a comrade sees:", emps_df['name'].tolist())
-        if st.sidebar.button("Go Undercover 🕵️‍♂️", use_container_width=True):
+        phase_target = st.sidebar.selectbox("Select an employee:", emps_df['name'].tolist())
+        if st.sidebar.button("Open Employee Dashboard", use_container_width=True):
             emp_row = emps_df[emps_df['name'] == phase_target].iloc[0]
             st.session_state.current_user = {
                 "role": "employee", 
@@ -292,72 +292,72 @@ elif st.session_state.current_user['role'] == 'admin':
             st.rerun()
 
     st.sidebar.write("---")
-    if st.sidebar.button("Log Out & Touch Grass 🌿", type="primary", use_container_width=True):
+    if st.sidebar.button("Sign Out", type="primary", use_container_width=True):
         st.session_state.current_user = None
         st.rerun()
 
     # ---------------------------------------------------------
     # VIEW 1: OPERATIONS DASHBOARD
     # ---------------------------------------------------------
-    if admin_view == "🏢 The Hustle Board":
-        st.title("The Hustle Board 🏢")
+    if admin_view == "Operations Dashboard":
+        st.title("Operations Dashboard")
         col1, col2 = st.columns([1, 2])
         
         with col1:
-            st.subheader("➕ Drop a Gig")
+            st.subheader("Create Assignment")
             with st.container(border=True):
                 with st.form("dispatch_form"):
-                    final_title = st.text_input("Gig Name")
+                    final_title = st.text_input("Assignment Title")
                     category = st.selectbox("Category", ["General", "Cleaning", "Janitorial", "Babysitting", "Moving", "Tutoring", "Event Staff"])
-                    instructions = st.text_area("The Tea / Instructions 📝 (Optional)")
+                    instructions = st.text_area("Instructions (Optional)")
                     
-                    st.write("**⚙️ Who's taking this?**")
-                    allocation_mode = st.radio("Routing Method", ["Let the algorithm cook 🍳", "Handpick the squad 🤝"])
+                    st.write("**Assignment Method**")
+                    allocation_mode = st.radio("Allocation method", ["Automated allocation", "Manual selection"])
                     
                     emp_options = dict(zip(emps_df['name'], emps_df['id'])) if not emps_df.empty else {}
                     
-                    if allocation_mode == "Handpick the squad 🤝":
-                        selected_squad_names = st.multiselect("👥 Pick the mandem", list(emp_options.keys()))
+                    if allocation_mode == "Manual selection":
+                        selected_squad_names = st.multiselect("Select employees", list(emp_options.keys()))
                         workers_needed = len(selected_squad_names)
                     else:
-                        workers_needed = st.number_input("How many hands we need?", min_value=1, step=1, value=1)
-                        st.caption("The system will pick the best comrades for the job.")
+                        workers_needed = st.number_input("Number of employees required", min_value=1, step=1, value=1)
+                        st.caption("The system will assign the most suitable available employees.")
                         
-                    st.write("**🔁 Is this a regular gig?**")
-                    is_recurring = st.checkbox("Yeah, make it recurring")
+                    st.write("**Recurring Assignment**")
+                    is_recurring = st.checkbox("Schedule this assignment to recur")
                     recurrence_pattern = ""
                     if is_recurring:
                         recurrence_pattern = st.selectbox("How often?", ["Daily", "Weekly", "Monthly"])
-                        st.caption("We'll auto-generate the next one after they get paid.")
+                        st.caption("The next assignment will be generated automatically after approval.")
                     
                     h_col, r_col = st.columns(2)
-                    hours = h_col.number_input("Hours / Person", min_value=0.5, step=0.5, value=1.0)
-                    rate = r_col.number_input("Rate / Hr (Ksh)", min_value=0.0, step=10.0, value=150.0)
+                    hours = h_col.number_input("Hours per Employee", min_value=0.5, step=0.5, value=1.0)
+                    rate = r_col.number_input("Hourly Rate (Ksh)", min_value=0.0, step=10.0, value=150.0)
                     
                     d_col, t_col = st.columns(2)
                     due_date = d_col.date_input("Deadline Date")
                     due_time = t_col.time_input("Deadline Time")
                     
-                    submitted = st.form_submit_button("Send it! 🚀", type="primary")
+                    submitted = st.form_submit_button("Create Assignment", type="primary")
                     
                     if submitted:
                         if final_title == "":
-                            st.error("Bruh, you gotta name the gig.")
+                            st.error("An assignment title is required.")
                         else:
                             exact_time_str = datetime.now(KISUMU_TZ).strftime("%Y-%m-%d %H:%M:%S")
                             final_due = f"{due_date} {due_time}"
                             payout_val = hours * rate
                             
                             final_assignees = []
-                            if allocation_mode == "Handpick the squad 🤝":
+                            if allocation_mode == "Manual selection":
                                 if not selected_squad_names:
-                                    st.error("You gotta select at least one person, chief.")
+                                    st.error("Select at least one employee.")
                                 else:
                                     final_assignees = [emp_options[name] for name in selected_squad_names]
                             else:
                                 eligible = emps_df[emps_df['skills'].str.contains(category, case=False, na=False)]
                                 if eligible.empty:
-                                    st.warning(f"Nobody has '{category}' skills listed. Throwing it to the general pool! 🤷‍♂️")
+                                    st.warning(f"No employees have been listed with '{category}' skills. The general employee pool will be used.")
                                     eligible = emps_df.copy()
                                 
                                 if not tasks_df.empty:
@@ -370,7 +370,7 @@ elif st.session_state.current_user['role'] == 'admin':
                                 final_assignees = best_emps['id'].tolist()
                                 
                                 if len(final_assignees) < workers_needed:
-                                    st.warning("Not enough free hands matching what you need, but assigning who we can! 🏃")
+                                    st.warning("Fewer available employees match the requested criteria than required. Assigning all eligible employees.")
 
                             if final_assignees:
                                 new_records = []
@@ -397,15 +397,15 @@ elif st.session_state.current_user['role'] == 'admin':
                                 updated_tasks_df = pd.concat([tasks_df, new_df], ignore_index=True)
                                 save_tasks(updated_tasks_df)
                                 
-                                st.success("Gig successfully dropped! 🎯")
+                                st.success("Assignment created successfully.")
                                 st.rerun()
 
         with col2:
-            st.subheader("⚡ Gigs in the Wild")
+            st.subheader("Active Assignments")
             active_tasks = tasks_df[tasks_df['status'].isin(['Pending', 'Confirmed', 'In Progress'])] if not tasks_df.empty else pd.DataFrame()
                 
             if active_tasks.empty:
-                st.info("No active gigs right now. Time to touch grass or scroll TikTok. 📱")
+                st.info("There are currently no active assignments.")
             else:
                 for i, task in active_tasks.iloc[::-1].iterrows():
                     if pd.isna(task.get('title')): continue 
@@ -414,24 +414,24 @@ elif st.session_state.current_user['role'] == 'admin':
                         with t_col1:
                             st.markdown(f"**{task['title']}** ({task.get('category', 'General')})")
                             emp_name = get_employee_name(task['employee_Id']).split(' ')[0]
-                            recur_badge = "🔁" if task.get('is_recurring') == "Yes" else ""
-                            st.caption(f"👤 Assigned: {emp_name} | 🎯 Deadline: {task.get('due_date', 'N/A')} {recur_badge}")
+                            recur_badge = "Recurring" if task.get('is_recurring') == "Yes" else ""
+                            st.caption(f"Assigned: {emp_name} | Deadline: {task.get('due_date', 'N/A')} | {recur_badge}")
                         with t_col2:
-                            if task['status'] == 'Pending': st.warning("Pending ⏳")
-                            elif task['status'] == 'Confirmed': st.success("Locked In ✅")
-                            elif task['status'] == 'In Progress': st.info("Cooking 🔄")
+                            if task['status'] == 'Pending': st.warning("Pending")
+                            elif task['status'] == 'Confirmed': st.success("Confirmed")
+                            elif task['status'] == 'In Progress': st.info("In Progress")
 
         st.write("---")
-        st.subheader("🗄️ The Master Ledger (Who's doing what)")
+        st.subheader("Assignment Register")
         
         if not tasks_df.empty:
             display_df = tasks_df.copy()
-            display_df['Hustler'] = display_df['employee_Id'].apply(get_employee_name)
-            display_df['Expected Payout (Ksh) 🤑'] = display_df.get('payout', display_df['hours'] * display_df['rate'])
-            display_df = display_df[['id', 'date_assigned', 'due_date', 'time_marked_done', 'title', 'category', 'Hustler', 'hours', 'rate', 'Expected Payout (Ksh) 🤑', 'status']]
+            display_df['Employee'] = display_df['employee_Id'].apply(get_employee_name)
+            display_df['Expected Payout (Ksh)'] = display_df.get('payout', display_df['hours'] * display_df['rate'])
+            display_df = display_df[['id', 'date_assigned', 'due_date', 'time_marked_done', 'title', 'category', 'Employee', 'hours', 'rate', 'Expected Payout (Ksh)', 'status']]
             st.dataframe(display_df.sort_values(by="id", ascending=False), use_container_width=True, hide_index=True)
         else:
-            st.info("The ledger is looking pretty empty, boss.")
+            st.info("The assignment register is currently empty.")
             
         if st.button("Refresh the Board", type="secondary"):
             fetch_portal_data.clear()
@@ -440,9 +440,9 @@ elif st.session_state.current_user['role'] == 'admin':
     # ---------------------------------------------------------
     # VIEW 1.5: QUALITY CONTROL (APPROVALS & RATING)
     # ---------------------------------------------------------
-    elif admin_view == "✅ Vibe Check (QA)":
-        st.title("Vibe Check & Approvals ✅")
-        st.caption("Check if the comrades actually did the work or if they're capping. Approve the bag or review the mess-ups.")
+    elif admin_view == "Quality Control":
+        st.title("Quality Control and Approvals")
+        st.caption("Review completed and cancelled assignments, approve payments, and record quality ratings.")
         
         if tasks_df.empty:
             st.info("Nothing to review right now.")
@@ -450,7 +450,7 @@ elif st.session_state.current_user['role'] == 'admin':
             qc_tasks = tasks_df[tasks_df['status'].isin(['Completed', 'Cancelled'])]
             
             if qc_tasks.empty:
-                st.info("All review queues are clear. We're chilling. 😎")
+                st.info("There are no assignments awaiting review.")
             else:
                 for i, t in qc_tasks.iterrows():
                     with st.container(border=True):
@@ -459,17 +459,17 @@ elif st.session_state.current_user['role'] == 'admin':
                         
                         if t['status'] == 'Completed':
                             with c1:
-                                st.markdown(f"### ✨ {t['title']}")
-                                st.caption(f"**Hustler:** {emp_name} | **Category:** {t.get('category', 'General')} | **Finished At:** {t.get('time_marked_done', 'N/A')}")
+                                st.markdown(f"### {t['title']}")
+                                st.caption(f"**Employee:** {emp_name} | **Category:** {t.get('category', 'General')} | **Completed:** {t.get('time_marked_done', 'N/A')}")
                                 if t.get('is_recurring') == 'Yes':
-                                    st.info(f"🔁 This is a regular gig ({t.get('recurrence_pattern')}). Approving this drops the next one in the queue.")
+                                    st.info(f"This is a recurring assignment ({t.get('recurrence_pattern')}). Approval will create the next scheduled assignment.")
                                 
-                                rating = st.slider(f"Rate the Vibe / Quality ({emp_name})", 1, 5, 5, key=f"rate_{t['id']}")
-                                st.caption(f"*Approving this gives 'em +{rating * 10} Clout Points.*")
+                                rating = st.slider(f"Quality rating for {emp_name}", 1, 5, 5, key=f"rate_{t['id']}")
+                                st.caption(f"Approval will award {rating * 10} performance points.")
                                 
                             with c2:
                                 st.markdown("<br><br>", unsafe_allow_html=True)
-                                if st.button("Approve & Pay the plug ✅", key=f"apprv_{t['id']}", type="primary", use_container_width=True):
+                                if st.button("Approve for Payment", key=f"apprv_{t['id']}", type="primary", use_container_width=True):
                                     tasks_df.loc[tasks_df['id'] == t['id'], 'status'] = 'Approved'
                                     tasks_df.loc[tasks_df['id'] == t['id'], 'rating'] = str(rating)
                                     
@@ -500,62 +500,62 @@ elif st.session_state.current_user['role'] == 'admin':
                                             save_tasks(updated_tasks_df)
                                         except Exception as e:
                                             save_tasks(tasks_df) 
-                                            st.error(f"Math ain't mathing for the recurrence schedule: {e}")
+                                            st.error(f"The recurring assignment schedule could not be calculated: {e}")
                                     else:
                                         save_tasks(tasks_df)
 
-                                    st.success(f"Gig Verified! Sent to the payroll queue. 💸")
+                                    st.success("Assignment approved and added to the payroll queue.")
                                     time.sleep(1)
                                     st.rerun()
 
                         elif t['status'] == 'Cancelled':
                             with c1:
-                                st.markdown(f"### 🚩 {t['title']} (Dropped the ball)")
-                                st.caption(f"**Hustler:** {emp_name} | **Category:** {t.get('category', 'General')} | **Assigned:** {t.get('date_assigned', 'N/A')}")
+                                st.markdown(f"### {t['title']} (Cancelled)")
+                                st.caption(f"**Employee:** {emp_name} | **Category:** {t.get('category', 'General')} | **Assigned:** {t.get('date_assigned', 'N/A')}")
                                 
                                 reason = t.get('cancel_reason', '')
-                                if not reason: reason = "Ghosted without a word."
-                                st.error(f"**Their Excuse:**\n{reason}")
-                                st.info("FYI: The system is trying to pass this gig to someone else so the bag doesn't fumble.")
+                                if not reason: reason = "No reason provided."
+                                st.error(f"**Cancellation reason:**\n{reason}")
+                                st.info("The system will attempt to reassign this assignment to another eligible employee.")
                                 
                             with c2:
                                 st.markdown("<br><br>", unsafe_allow_html=True)
-                                if st.button("Acknowledge & Archive 🚮", key=f"ack_{t['id']}", use_container_width=True):
+                                if st.button("Acknowledge and Archive", key=f"ack_{t['id']}", use_container_width=True):
                                     tasks_df.loc[tasks_df['id'] == t['id'], 'status'] = 'Cancelled (Reviewed)'
                                     save_tasks(tasks_df)
-                                    st.success("Archived! We move. 🏃‍♂️")
+                                    st.success("Assignment reviewed and archived.")
                                     time.sleep(1)
                                     st.rerun()
 
     # ---------------------------------------------------------
     # VIEW 2: FINANCE & ANALYTICS
     # ---------------------------------------------------------
-    elif admin_view == "💼 The Bag (Finance)":
-        st.title("The Bag Manager 💼")
-        st.caption("Track the mullah coming in, pay the mandem, and see the profits.")
+    elif admin_view == "Finance and Analytics":
+        st.title("Finance and Analytics")
+        st.caption("Monitor revenue, payroll obligations, billing recommendations, and profitability.")
         
         total_income = acct_df[acct_df['type'] == 'Income']['amount'].sum() if not acct_df.empty else 0.0
         total_payroll_cleared = acct_df[acct_df['type'] == 'Expense']['amount'].sum() if not acct_df.empty else 0.0
         gross_profit = total_income - total_payroll_cleared
         
         m1, m2, m3 = st.columns(3)
-        m1.metric("Total Mullah In (Ksh)", f"{total_income:,.2f}")
-        m2.metric("Money Out (Ksh)", f"{total_payroll_cleared:,.2f}")
-        m3.metric("Profit / The Real Bag 🤑", f"{gross_profit:,.2f}", delta="We up!" if gross_profit > 0 else None)
+        m1.metric("Total Revenue (Ksh)", f"{total_income:,.2f}")
+        m2.metric("Total Payroll Expense (Ksh)", f"{total_payroll_cleared:,.2f}")
+        m3.metric("Gross Profit (Ksh)", f"{gross_profit:,.2f}", delta="Positive" if gross_profit > 0 else None)
         
         st.write("---")
 
-        st.subheader("🧮 Client Billing Calculator")
-        st.caption("Quick maths to see what we should charge the clients.")
+        st.subheader("Client Billing Calculator")
+        st.caption("Estimate client billing requirements based on personnel costs and target margin.")
         
         with st.container(border=True):
             q_col1, q_col2, q_col3 = st.columns(3)
             with q_col1:
-                est_workers = st.number_input("How many comrades needed?", min_value=1, value=2)
-                est_hours = st.number_input("Estimated Hours per Person", min_value=0.5, step=0.5, value=4.0)
+                est_workers = st.number_input("Number of employees required", min_value=1, value=2)
+                est_hours = st.number_input("Estimated Hours per Employee", min_value=0.5, step=0.5, value=4.0)
             with q_col2:
-                worker_rate = st.number_input("Base Pay (Ksh/hr)", min_value=50.0, step=10.0, value=150.0)
-                target_margin = st.slider("Our Cut / Profit Margin (%)", min_value=10, max_value=100, value=40, step=5)
+                worker_rate = st.number_input("Base Compensation (Ksh/hr)", min_value=50.0, step=10.0, value=150.0)
+                target_margin = st.slider("Target Profit Margin (%)", min_value=10, max_value=100, value=40, step=5)
             
             total_worker_cost = est_workers * est_hours * worker_rate
             markup_multiplier = 1 + (target_margin / 100.0)
@@ -564,24 +564,24 @@ elif st.session_state.current_user['role'] == 'admin':
             recommended_hourly_bill = recommended_total_bill / (est_workers * est_hours) if (est_workers * est_hours) > 0 else 0
 
             with q_col3:
-                st.info(f"**What we pay the team:** Ksh {total_worker_cost:,.2f}")
-                st.success(f"**What to invoice the client:** Ksh {recommended_total_bill:,.2f}")
-                st.metric("Our Cut (Profit)", f"Ksh {projected_profit:,.2f}")
-                st.caption(f"Charge 'em: Ksh {recommended_hourly_bill:,.2f} / hr per comrade")
+                st.info(f"**Estimated personnel cost:** Ksh {total_worker_cost:,.2f}")
+                st.success(f"**Recommended client invoice:** Ksh {recommended_total_bill:,.2f}")
+                st.metric("Projected Profit", f"Ksh {projected_profit:,.2f}")
+                st.caption(f"Recommended hourly billing rate: Ksh {recommended_hourly_bill:,.2f} per employee")
 
         st.write("---")
         
         colA, colB = st.columns([1, 1])
         
         with colA:
-            st.subheader("📥 Log New Income")
-            st.caption("Did a client pay up? Log the bag here.")
+            st.subheader("Record Revenue")
+            st.caption("Record payments received from clients.")
             with st.container(border=True):
                 with st.form("income_form"):
-                    inc_desc = st.text_input("Where's the money from?", placeholder="e.g., Kileleshwa Moving Gig")
+                    inc_desc = st.text_input("Revenue description", placeholder="e.g., Kileleshwa moving assignment")
                     inc_amount = st.number_input("Amount (Ksh)", min_value=0.0, step=500.0)
                     
-                    if st.form_submit_button("Secure the Bag 💰", type="primary"):
+                    if st.form_submit_button("Record Revenue", type="primary"):
                         if inc_desc and inc_amount > 0:
                             new_tx = pd.DataFrame([{
                                 "tx_id": f"TX-INC-{int(time.time())}",
@@ -596,35 +596,35 @@ elif st.session_state.current_user['role'] == 'admin':
                             updated_acct_df = pd.concat([acct_df, new_tx], ignore_index=True)
                             save_acct(updated_acct_df)
                             
-                            st.success("Money logged! We eating good tonight. 🍗")
+                            st.success("Revenue recorded successfully.")
                             st.rerun()
                         else:
-                            st.error("Bruh, fill it out properly.")
+                            st.error("Provide a description and a valid amount.")
 
         with colB:
-            st.subheader("🧾 Pay the Mandem")
-            st.caption("See who's waiting on their chapaa.")
+            st.subheader("Payroll Processing")
+            st.caption("Review approved assignments awaiting payment.")
             
             unpaid_tasks = tasks_df[tasks_df['status'] == 'Approved'].copy() if not tasks_df.empty else pd.DataFrame()
             
             if unpaid_tasks.empty:
-                st.info("Nobody owes nobody. Everyone is paid up! 🥳")
+                st.info("There are no approved assignments awaiting payment.")
             else:
                 unpaid_tasks['payout'] = pd.to_numeric(unpaid_tasks['payout'], errors='coerce')
                 payroll_summary = unpaid_tasks.groupby('employee_Id')['payout'].sum().reset_index()
                 
                 payroll_report = payroll_summary.merge(emps_df[['id', 'name', 'phone']], left_on='employee_Id', right_on='id')
                 payroll_report = payroll_report[['name', 'payout']]
-                payroll_report.columns = ['Hustler Name', 'Owed (Ksh)']
+                payroll_report.columns = ['Employee Name', 'Amount Due (Ksh)']
                 
-                total_liability = payroll_report['Owed (Ksh)'].sum()
-                st.metric("Total Cash to Send Out", f"Ksh {total_liability:,.2f}")
+                total_liability = payroll_report['Amount Due (Ksh)'].sum()
+                st.metric("Total Payroll Liability", f"Ksh {total_liability:,.2f}")
                 st.dataframe(payroll_report, use_container_width=True, hide_index=True)
                 
-                if st.button("Hit Send on M-PESA / Pay All", type="primary", use_container_width=True):
-                    with st.spinner("Crunching the numbers..."):
+                if st.button("Process Payroll via M-PESA", type="primary", use_container_width=True):
+                    with st.spinner("Processing payroll..."):
                         
-                        details_list = [f"{row['Hustler Name']}: Ksh {row['Owed (Ksh)']}" for _, row in payroll_report.iterrows()]
+                        details_list = [f"{row['Employee Name']}: Ksh {row['Amount Due (Ksh)']}" for _, row in payroll_report.iterrows()]
                         details_str = " | ".join(details_list)
                         
                         tasks_df.loc[tasks_df['status'] == 'Approved', 'status'] = 'Paid'
@@ -643,21 +643,20 @@ elif st.session_state.current_user['role'] == 'admin':
                         updated_acct_df = pd.concat([acct_df, new_tx], ignore_index=True)
                         save_acct(updated_acct_df)
                         
-                    st.success("Payroll logged! Don't forget to actually send the money. 😂")
+                    st.success("Payroll has been recorded. Complete the corresponding M-PESA transfers as required.")
                     st.rerun()
 
         st.write("---")
-        st.subheader("📚 The Receipts")
-        st.caption("Check the ledger. Mark 'em as Cleared once the money has officially moved.")
+        st.subheader("Transaction Ledger")
+        st.caption("Review recorded transactions and mark them as cleared once funds have been transferred.")
         
         if not acct_df.empty:
             for i, tx in acct_df.sort_values(by="date", ascending=False).iterrows():
-                status_emoji = "⏳" if tx.get('status', 'Pending') == "Pending" else "✅"
-                with st.expander(f"{status_emoji} {tx['date'][:10]} | {tx['tx_id']} | {tx['type']} | Ksh {tx['amount']:,.2f}"):
-                    st.write(f"**What was it:** {tx['description']}")
+                with st.expander(f"{tx['date'][:10]} | {tx['tx_id']} | {tx['type']} | Ksh {tx['amount']:,.2f}"):
+                    st.write(f"**Description:** {tx['description']}")
                     
                     if pd.notna(tx.get('details')) and str(tx.get('details')).strip() != "":
-                        st.markdown("**Who got paid:**")
+                        st.markdown("**Payment details:**")
                         for detail in str(tx['details']).split(" | "):
                             st.caption(f"🔹 {detail}")
                             
@@ -674,11 +673,11 @@ elif st.session_state.current_user['role'] == 'admin':
                     if new_status != current_status:
                         acct_df.at[i, 'status'] = new_status
                         save_acct(acct_df)
-                        st.success(f"Status changed to {new_status}. We move!")
+                        st.success(f"Transaction status updated to {new_status}.")
                         time.sleep(0.5)
                         st.rerun()
         else:
-            st.info("No receipts yet. It's too quiet in here.")
+            st.info("No transactions have been recorded.")
 
 # --- 3. EMPLOYEE DASHBOARD ---
 elif st.session_state.current_user['role'] == 'employee':
@@ -690,12 +689,12 @@ elif st.session_state.current_user['role'] == 'employee':
     my_points = my_emp_row['points'] if my_emp_row is not None else 0
     my_skills = my_emp_row['skills'].split(', ') if my_emp_row is not None and pd.notna(my_emp_row['skills']) else ["General"]
     
-    st.sidebar.title("👤 My Vibe")
-    st.sidebar.write(f"Wagwan,\n**{user_name}**! 🚀")
+    st.sidebar.title("Employee Dashboard")
+    st.sidebar.write(f"Signed in as **{user_name}**.")
     st.sidebar.write("---")
     
-    with st.sidebar.expander("🛠️ Update My Skills"):
-        st.caption("Don't cap, what are you actually good at?")
+    with st.sidebar.expander("Update Skills"):
+        st.caption("Maintain your current areas of expertise.")
         available_skills = ["General", "Cleaning", "Janitorial", "Babysitting", "Moving", "Tutoring", "Event Staff"]
         new_skills = st.multiselect("My skills", available_skills, default=[s for s in my_skills if s in available_skills])
         if st.button("Save Skills"):
@@ -703,21 +702,21 @@ elif st.session_state.current_user['role'] == 'employee':
             emp_idx = emps_df.index[emps_df['id'] == user_id].tolist()[0]
             emps_df.at[emp_idx, 'skills'] = skills_str
             save_emps(emps_df)
-            st.success("Profile updated! Stay on the grind. 💯")
+            st.success("Profile updated successfully.")
             st.rerun()
 
     st.sidebar.write("---")
     wa_url = f"https://wa.me/{SUPPORT_NUMBER}?text=Yo%20Admin,%20need%20some%20help%20here:%20"
-    st.sidebar.link_button("💬 Holla at Admin", wa_url, use_container_width=True)
+    st.sidebar.link_button("Contact Administrator", wa_url, use_container_width=True)
     st.sidebar.write("---")
     
     if is_phased:
-        st.sidebar.warning("👀 SNOOP MODE ON")
-        if st.sidebar.button("Back to Big Boss View", type="primary", use_container_width=True):
-            st.session_state.current_user = {"role": "admin", "name": "The Big Boss"}
+        st.sidebar.warning("Administrator Preview Mode")
+        if st.sidebar.button("Return to Administration Dashboard", type="primary", use_container_width=True):
+            st.session_state.current_user = {"role": "admin", "name": "Administrator"}
             st.rerun()
     else:
-        if st.sidebar.button("Log Out", type="primary", use_container_width=True):
+        if st.sidebar.button("Sign Out", type="primary", use_container_width=True):
             st.session_state.current_user = None
             st.rerun()
 
@@ -729,21 +728,21 @@ elif st.session_state.current_user['role'] == 'employee':
     else:
         my_tasks, total_earned, pending_balance = pd.DataFrame(), 0, 0
 
-    st.subheader("My Stats 📊")
+    st.subheader("Performance Summary")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Bag Secured 💰", f"Ksh {total_earned}")
-    c2.metric("Pending Chapaa ⏳", f"Ksh {pending_balance}")
-    c3.metric("Clout Points 🌟", f"{my_points} pts")
+    c1.metric("Total Earnings (Ksh)", f"Ksh {total_earned}")
+    c2.metric("Pending Earnings (Ksh)", f"Ksh {pending_balance}")
+    c3.metric("Performance Points", f"{my_points} pts")
     
     st.write("---")
-    st.subheader("🏃 My Active Gigs")
+    st.subheader("My Active Assignments")
     
     if st.button("Refresh Page", type="secondary"):
         fetch_portal_data.clear()
         st.rerun()
     
     if my_tasks.empty:
-        st.info("No gigs right now. Sit tight or go touch grass. 🌿")
+        st.info("There are currently no active assignments.")
     else:
         for i, task in my_tasks.iterrows():
             if pd.isna(task.get('title')): continue
@@ -752,27 +751,27 @@ elif st.session_state.current_user['role'] == 'employee':
                 colA, colB = st.columns([3, 1])
                 with colA:
                     st.markdown(f"### {task['title']}")
-                    if task.get('instructions'): st.info(f"**📝 The Tea / Instructions:**\n\n{task['instructions']}")
+                    if task.get('instructions'): st.info(f"**Instructions:**\n\n{task['instructions']}")
                     
                     date_str = task.get('date_assigned', 'Unknown Date')
                     due_str = task.get('due_date', 'N/A')
                     payout_val = task.get('payout', float(task['hours']) * float(task['rate']))
-                    st.caption(f"🕒 Dropped on: {date_str} | 🎯 Deadline: {due_str} | Hustle: {task['hours']} hrs @ Ksh {task['rate']}/hr  => **The Bag: Ksh {payout_val}**")
+                    st.caption(f"Assigned: {date_str} | Deadline: {due_str} | Hours: {task['hours']} at Ksh {task['rate']}/hr => **Expected earnings: Ksh {payout_val}**")
 
                 with colB:
                     if task['status'] == 'Pending':
-                        if st.button("I'm on it! ✅", key=f"confirm_{task['id']}", type="primary"):
+                        if st.button("Confirm Assignment", key=f"confirm_{task['id']}", type="primary"):
                             tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Confirmed'
-                            with st.spinner("Locking it in..."):
+                            with st.spinner("Confirming assignment..."):
                                 save_tasks(tasks_df)
                             st.rerun()
                             
-                        with st.expander("Pass / I can't ❌"):
-                            st.caption("Spill the tea. Why are you dodging this gig?")
+                        with st.expander("Decline Assignment"):
+                            st.caption("Provide the reason for declining this assignment.")
                             reason = st.text_area("Reason:", key=f"reason_{task['id']}")
-                            if st.button("Nah, I'm out", key=f"cancel_btn_{task['id']}", type="primary"):
+                            if st.button("Decline Assignment", key=f"cancel_btn_{task['id']}", type="primary"):
                                 if not reason.strip():
-                                    st.error("You gotta give a reason, bro. Don't just ghost.")
+                                    st.error("A reason is required when declining an assignment.")
                                 else:
                                     tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Cancelled'
                                     tasks_df.loc[tasks_df['id'] == task['id'], 'cancel_reason'] = reason
@@ -798,13 +797,13 @@ elif st.session_state.current_user['role'] == 'employee':
                                     else:
                                         updated_tasks_df = tasks_df
                                     
-                                    with st.spinner("Passing the baton..."):
+                                    with st.spinner("Reassigning the assignment..."):
                                         save_tasks(updated_tasks_df)
                                     st.session_state[f"wa_reason_{task['id']}"] = reason
                                     st.rerun()
                                     
                     elif task['status'] == 'Confirmed':
-                        if st.button("Let's get this bread 🏃", key=f"start_{task['id']}", type="secondary"):
+                        if st.button("Start Assignment", key=f"start_{task['id']}", type="secondary"):
                             allowed_to_start = True
                             if due_str:
                                 try:
@@ -818,22 +817,22 @@ elif st.session_state.current_user['role'] == 'employee':
                                         hours_wait = int(wait_time.total_seconds() // 3600)
                                         mins_wait = int((wait_time.total_seconds() % 3600) // 60)
                                         
-                                        st.error(f"🛑 Hold your horses! You can only start 1 hour before the deadline. Chill for another {hours_wait}h {mins_wait}m.")
+                                        st.error(f"This assignment may only be started one hour before the deadline. Please wait {hours_wait} hours and {mins_wait} minutes.")
                                 except Exception as e:
                                     pass 
                             
                             if allowed_to_start:
                                 tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'In Progress'
-                                with st.spinner("Status: Cooking 🍳"):
+                                with st.spinner("Updating assignment status..."):
                                     save_tasks(tasks_df)
                                 st.rerun()
                             
-                        with st.expander("I gotta bounce 🚫"):
-                            st.caption("Tell us why you're bailing on a gig you already took.")
+                        with st.expander("Withdraw from Assignment"):
+                            st.caption("Provide the reason for withdrawing from this confirmed assignment.")
                             reason = st.text_area("Reason:", key=f"reason_{task['id']}")
-                            if st.button("Bail Out", key=f"cancel_btn2_{task['id']}", type="primary"):
+                            if st.button("Withdraw Assignment", key=f"cancel_btn2_{task['id']}", type="primary"):
                                 if not reason.strip():
-                                    st.error("No reason? That's a red card. Type something!")
+                                    st.error("A reason is required when withdrawing from an assignment.")
                                 else:
                                     tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Cancelled'
                                     tasks_df.loc[tasks_df['id'] == task['id'], 'cancel_reason'] = reason
@@ -859,44 +858,44 @@ elif st.session_state.current_user['role'] == 'employee':
                                     else:
                                         updated_tasks_df = tasks_df
 
-                                    with st.spinner("Re-routing to another comrade..."):
+                                    with st.spinner("Reassigning the assignment..."):
                                         save_tasks(updated_tasks_df)
                                     st.session_state[f"wa_reason_{task['id']}"] = reason
                                     st.rerun()
 
                     elif task['status'] == 'In Progress':
-                        if st.button("Finished the Gig ✔️", key=f"done_{task['id']}", type="primary"):
+                        if st.button("Mark Assignment Complete", key=f"done_{task['id']}", type="primary"):
                             tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Completed'
                             tasks_df.loc[tasks_df['id'] == task['id'], 'time_marked_done'] = datetime.now(KISUMU_TZ).strftime("%Y-%m-%d %H:%M:%S")
-                            with st.spinner("Sending proof to the Big Boss..."):
+                            with st.spinner("Submitting completion for review..."):
                                 save_tasks(tasks_df)
                             st.rerun()
-                        with st.expander("Bro, I messed up 🚩"):
-                            st.caption("Did you get lost in the sauce? Tell us what went wrong.")
+                        with st.expander("Report an Issue"):
+                            st.caption("Provide details about the issue affecting this assignment.")
                             reason = st.text_area("Reason:", key=f"reason_abort_{task['id']}")
-                            if st.button("Abort Mission", key=f"abscond_{task['id']}"):
+                            if st.button("Cancel Assignment", key=f"abscond_{task['id']}"):
                                 if not reason.strip():
-                                    st.error("You can't just quit without an explanation. Spill it.")
+                                    st.error("An explanation is required before cancelling an assignment.")
                                 else:
                                     tasks_df.loc[tasks_df['id'] == task['id'], 'status'] = 'Cancelled'
                                     tasks_df.loc[tasks_df['id'] == task['id'], 'cancel_reason'] = reason
                                     
-                                    with st.spinner("Shutting it down..."):
+                                    with st.spinner("Cancelling assignment..."):
                                         save_tasks(tasks_df)
                                     st.session_state[f"wa_reason_{task['id']}"] = reason
                                     st.rerun()
                                     
                     elif task['status'] == 'Completed':
-                        st.warning("Waiting for the Boss to vibe-check this ⏳")
+                        st.warning("Awaiting administrator quality review.")
                     elif task['status'] == 'Approved':
-                        st.info("Verified! ✨ The bag is on its way. 💸")
+                        st.info("Assignment approved. Payment is being processed.")
                     elif task['status'] == 'Paid':
-                        st.success(f"Paid! ✅ | Clout Metric: {task.get('rating', '5')} / 5 ⭐")
+                        st.success(f"Payment completed. Quality rating: {task.get('rating', '5')} / 5.")
                     elif task['status'] in ['Cancelled', 'Absconded', 'Cancelled (Reviewed)']:
-                        st.error("Gig Cancelled 🚩")
+                        st.error("Assignment cancelled.")
                         
                         reason_text = st.session_state.get(f"wa_reason_{task['id']}", task.get('cancel_reason', ''))
                         if reason_text:
-                            encoded_msg = urllib.parse.quote(f"🚨 *Bro, we have a situation*\\n*Who:* {user_name}\\n*Gig:* {task['title']}\\n*The Tea:* {reason_text}")
+                            encoded_msg = urllib.parse.quote(f"*Assignment Cancellation Notice*\\n*Employee:* {user_name}\\n*Assignment:* {task['title']}\\n*Reason:* {reason_text}")
                             wa_url = f"https://wa.me/{SUPPORT_NUMBER}?text={encoded_msg}"
-                            st.link_button("📲 Explain yourself to the Big Boss on WhatsApp", wa_url)
+                            st.link_button("Contact the Administrator via WhatsApp", wa_url)

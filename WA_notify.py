@@ -27,14 +27,14 @@ def send_whatsapp_msg(phone, message):
         print("No valid phone number provided.")
         return False
 
-    print(f"📱 Attempting to notify {phone}: {message[:30]}...")
+    print(f"Attempting to notify {phone}: {message[:30]}...")
     
     # --- META WHATSAPP API LOGIC ---
     ACCESS_TOKEN = os.getenv("WA_TOKEN")
     PHONE_ID = os.getenv("WA_PHONE_ID")
     
     if not ACCESS_TOKEN or not PHONE_ID:
-        print("❌ API ERROR: Missing WA_TOKEN or WA_PHONE_ID in your environment variables. Service cannot proceed.")
+        print("API error: WA_TOKEN or WA_PHONE_ID is missing from the environment. Notification service cannot proceed.")
         return False
 
     url = f"https://graph.facebook.com/v17.0/{PHONE_ID}/messages"
@@ -53,33 +53,33 @@ def send_whatsapp_msg(phone, message):
         response = requests.post(url, headers=headers, json=payload)
         
         if response.status_code != 200:
-            print(f"❌ META API ERROR (Status {response.status_code}): {response.text}")
+            print(f"Meta API error (status {response.status_code}): {response.text}")
             return False
             
-        print("✅ Message successfully delivered!")
+        print("Message delivered successfully.")
         return True
     
     except Exception as e:
-        print(f"❌ FATAL ERROR executing request: {e}")
+        print(f"Notification request failed: {e}")
         return False
 
 def task_scan():
     """ Main routine to scan the SSS Database for notification triggers. """
-    print("🤖 Waking up... Scanning the SSS Database...")
+    print("Scanning the SSS database for notification triggers...")
     
     creds_json = os.getenv("GCP_SERVICE_ACCOUNT")
     if not creds_json:
-        print("🚨 System Error! No GCP credentials found. Check your secrets.")
+        print("System error: Google Cloud credentials were not found. Review the configured secrets.")
         return
 
     try:
         creds_json = creds_json.strip().strip("'").strip('"')
         
         if creds_json.endswith('.json') and os.path.exists(creds_json):
-            print("📂 Loading credentials directly from local JSON file...")
+            print("Loading credentials from the local JSON file...")
             client = gspread.service_account(filename=creds_json)
         else:
-            print("🌐 Parsing raw JSON credentials...")
+            print("Parsing service account credentials...")
             creds_dict = json.loads(creds_json)
             client = gspread.service_account_from_dict(creds_dict)
             
@@ -91,11 +91,11 @@ def task_scan():
         tasks_df = pd.DataFrame(tasks_ws.get_all_records())
         emps_df = pd.DataFrame(emps_ws.get_all_records())
     except Exception as e:
-        print(f"🚨 System Failure! Failed to load Google Sheets. Error: {e}")
+        print(f"System failure: unable to load Google Sheets. Error: {e}")
         return
     
     if tasks_df.empty:
-        print("No active tasks found. System idle. 😴")
+        print("No active assignments found. Notification scan complete.")
         return
 
     tasks_df['employee_Id'] = tasks_df['employee_Id'].astype(str)
@@ -103,7 +103,7 @@ def task_scan():
     emps_df['phone'] = emps_df['phone'].astype(str)
 
     now = datetime.now(KISUMU_TZ)
-    print(f"🕒 Current Kisumu Time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Current Kisumu time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
     updates_made = False
 
@@ -125,17 +125,17 @@ def task_scan():
         emp_phone = emp_match.iloc[0].get('phone', '')
         emp_name = emp_match.iloc[0].get('name', 'Employee')
 
-        # 🚀 ALERT ADMIN: Cancelled Task with Reason
+        # Notify the administrator about a cancelled task with a reason.
         if status == 'Cancelled' and row.get('cancel_reason') and not row.get('msg_admin_cancelled'):
-            msg = f"🚨 *Task Cancellation Alert* 🚨\nWorker: {emp_name}\nTask: {task_title}\nReason Provided: {row.get('cancel_reason')}\n\n🤖 Note: If auto-reassign was possible, the algorithm has already created a new Pending task for another eligible worker!"
+            msg = f"*Assignment Cancellation Alert*\nEmployee: {emp_name}\nAssignment: {task_title}\nReason provided: {row.get('cancel_reason')}\n\nIf reassignment was possible, the system has created a new pending assignment for another eligible employee."
             if send_whatsapp_msg(ADMIN_CONTACT, msg):
                 tasks_df.at[index, 'msg_admin_cancelled'] = 'Yes'
                 updates_made = True
             continue # We don't need to process reminder alerts for cancelled tasks
 
-        # 🚀 ALERT ADMIN: Task Completed! QC Check Required
+        # Notify the administrator that quality control review is required.
         if status == 'Completed' and not row.get('msg_admin_completed'):
-            msg = f"✨ *Task Completed Alert* ✨\nWorker: {emp_name}\nTask: {task_title}\nBro just cooked and marked this done! 🍳\n\nPlease log into the SSS Admin Portal -> Quality Control to review, drop a star rating ⭐️, and float their funds to Payroll.\nhttps://3wfppg3ykc6sulf5tclxdp.streamlit.app/ "
+            msg = f"*Assignment Completed*\nEmployee: {emp_name}\nAssignment: {task_title}\nThe employee has marked this assignment as complete.\n\nPlease sign in to the SSS Administration Portal and open Quality Control to review the assignment, record a rating, and approve payment.\nhttps://3wfppg3ykc6sulf5tclxdp.streamlit.app/ "
             if send_whatsapp_msg(ADMIN_CONTACT, msg):
                 tasks_df.at[index, 'msg_admin_completed'] = 'Yes'
                 updates_made = True
@@ -143,9 +143,9 @@ def task_scan():
 
         # For tasks that are still active
         if status in ['Pending', 'Confirmed', 'In Progress']:
-            # 🚀 ALERT 1: Task Allocated
+            # Notify the employee that an assignment has been allocated.
             if not row.get('msg_allocated'):
-                msg = f"🚨 *New Task Assigned!*\nHello {emp_name}, you have been assigned a new task: *{task_title}*.\nDue: {due_str}.\nPlease log into the portal to review and confirm your availability.\n https://3wfppg3ykc6sulf5tclxdp.streamlit.app/ 💼\n📞 Admin contact: {ADMIN_CONTACT}"
+                msg = f"*New Assignment*\nDear {emp_name}, you have been assigned: *{task_title}*.\nDeadline: {due_str}.\nPlease sign in to the portal to review and confirm your availability.\nhttps://3wfppg3ykc6sulf5tclxdp.streamlit.app/\nAdministrator contact: {ADMIN_CONTACT}"
                 if send_whatsapp_msg(emp_phone, msg):
                     tasks_df.at[index, 'msg_allocated'] = 'Yes'
                     updates_made = True
@@ -156,23 +156,23 @@ def task_scan():
                     due_date = KISUMU_TZ.localize(datetime.strptime(due_str, "%Y-%m-%d %H:%M:%S"))
                     time_diff = due_date - now
                     
-                    # 🚀 ALERT 2: Night Before Reminder
+                    # Send the scheduled reminder for the following day.
                     if timedelta(hours=12) < time_diff <= timedelta(hours=24) and not row.get('msg_night_before'):
-                        msg = f"🌙 *Task Reminder*\nHello {emp_name}, a reminder that your task *{task_title}* is scheduled for tomorrow at {due_date.strftime('%I:%M %p')}. \n https://3wfppg3ykc6sulf5tclxdp.streamlit.app/ Have a good night! 🌟\n📞 Admin contact: {ADMIN_CONTACT}"
+                        msg = f"*Assignment Reminder*\nDear {emp_name}, your assignment *{task_title}* is scheduled for tomorrow at {due_date.strftime('%I:%M %p')}.\nhttps://3wfppg3ykc6sulf5tclxdp.streamlit.app/\nAdministrator contact: {ADMIN_CONTACT}"
                         if send_whatsapp_msg(emp_phone, msg):
                             tasks_df.at[index, 'msg_night_before'] = 'Yes'
                             updates_made = True
 
-                    # 🚀 ALERT 3: Sometime Before (1 hour before gig)
+                    # Send the one-hour reminder.
                     if timedelta(minutes=0) < time_diff <= timedelta(hours=1) and not row.get('msg_1hr_before'):
-                        msg = f"⏳ *1 Hour Reminder!*\nHello {emp_name}, your task *{task_title}* is due to start in less than an hour. Please ensure you are ready to begin. \n https://3wfppg3ykc6sulf5tclxdp.streamlit.app/ 🚀\n📞 Admin contact: {ADMIN_CONTACT}"
+                        msg = f"*One-Hour Assignment Reminder*\nDear {emp_name}, your assignment *{task_title}* is scheduled to begin in less than one hour. Please ensure you are ready to begin.\nhttps://3wfppg3ykc6sulf5tclxdp.streamlit.app/\nAdministrator contact: {ADMIN_CONTACT}"
                         if send_whatsapp_msg(emp_phone, msg):
                             tasks_df.at[index, 'msg_1hr_before'] = 'Yes'
                             updates_made = True
 
-                    # 🚀 ALERT 4: Late Alert (30 mins late AND hasn't clocked in)
+                    # Notify the employee when an assignment is overdue.
                     if time_diff < timedelta(minutes=-30) and status in ['Pending', 'Confirmed'] and not row.get('msg_late'):
-                        msg = f"🚩 *Task Overdue Alert!* 🚩\nHello {emp_name}, you are over 30 minutes late to start *{task_title}*. Please log in and click 'Start Task' immediately, or the task may be reassigned. \n https://3wfppg3ykc6sulf5tclxdp.streamlit.app/ 🛑\n📞 Admin contact: {ADMIN_CONTACT}"
+                        msg = f"*Assignment Overdue*\nDear {emp_name}, assignment *{task_title}* is more than 30 minutes overdue. Please sign in and select 'Start Assignment' immediately; otherwise, the assignment may be reassigned.\nhttps://3wfppg3ykc6sulf5tclxdp.streamlit.app/\nAdministrator contact: {ADMIN_CONTACT}"
                         if send_whatsapp_msg(emp_phone, msg):
                             tasks_df.at[index, 'msg_late'] = 'Yes'
                             updates_made = True
@@ -181,29 +181,29 @@ def task_scan():
                     pass 
 
     if updates_made:
-        print("💾 Updating Google Sheets with sent message records...")
+        print("Updating Google Sheets with notification records...")
         tasks_ws.clear()
         tasks_ws.update([tasks_df.columns.values.tolist()] + tasks_df.fillna('').values.tolist())
-        print("✅ Data saved. Sync complete. Main character energy maintained.")
+        print("Notification records saved successfully. Synchronization complete.")
     else:
-        print("💤 No new alerts needed. System on standby.")
+        print("No new notifications are required. System on standby.")
 
 def main():
     is_github_actions = os.getenv("GITHUB_ACTIONS") == "true"
 
     if is_github_actions:
-        print("☁️ Cloud Environment detected. Running scheduled scan. 📊")
+        print("Cloud environment detected. Running scheduled scan.")
         task_scan()
     else:
-        print("💻 Local Environment detected. Initiating 24/7 background service... 🚀")
+        print("Local environment detected. Starting the background notification service.")
         while True:
             try:
                 task_scan()
-                print("⏳ Scan complete. Pausing for 15 minutes before the next sync... 🧊")
+                print("Scan complete. Pausing for 15 minutes before the next synchronization.")
                 time.sleep(900) 
             except Exception as e:
-                print(f"🚨 MAJOR ERROR ENCOUNTERED: {e}")
-                print("Cooling down for 5 minutes before retrying...")
+                print(f"Notification service error: {e}")
+                print("Retrying after a five-minute delay.")
                 time.sleep(300) 
 
 if __name__ == "__main__":
