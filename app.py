@@ -393,7 +393,7 @@ if st.session_state.current_user is None:
     left, centre, right = st.columns([1, 2, 1])
     with centre:
         st.markdown(
-            "<h1 style='text-align:center'>✨ SSS Employment Portal</h1>",
+            "<h1 style='text-align:center'>SSS Employment Portal</h1>",
             unsafe_allow_html=True,
         )
         st.markdown(
@@ -405,7 +405,7 @@ if st.session_state.current_user is None:
                 login_user = st.text_input("Username")
                 login_pass = st.text_input("Password", type="password")
                 submitted = st.form_submit_button(
-                    "Log In 🚀", use_container_width=True, type="primary"
+                    "Sign In", use_container_width=True, type="primary"
                 )
             if submitted:
                 if login_user == ADMIN_USER and login_pass == ADMIN_PASS:
@@ -438,25 +438,25 @@ if st.session_state.current_user is None:
                         }
                         _refresh()
                 elif not (login_user == ADMIN_USER and login_pass == ADMIN_PASS):
-                    st.error("Invalid credentials. Access denied. 🛑")
+                    st.error("The credentials provided are invalid. Access denied.")
 
 
 elif st.session_state.current_user["role"] == "admin":
     inject_custom_bg("admin")
-    st.sidebar.title("🛡️ Admin Portal")
+    st.sidebar.title("Administration Portal")
     admin_view = st.sidebar.radio(
-        "Navigation", ["🏢 Employer & Job Seeker Management", "📋 Vacancy Management"]
+        "Navigation", ["Employer and Job Seeker Management", "Vacancy Management"]
     )
-    if st.sidebar.button("Log Out 🚪", type="primary", use_container_width=True):
+    if st.sidebar.button("Sign Out", type="primary", use_container_width=True):
         _logout()
 
-    st.sidebar.subheader("👁️ View As User")
+    st.sidebar.subheader("Preview User Dashboard")
     phase_type = st.sidebar.selectbox("Dashboard type", ["Job Seeker", "Employer"])
     phase_frame = job_seekers_df if phase_type == "Job Seeker" else employers_df
     verified_phase = phase_frame[phase_frame.apply(_verified, axis=1)] if not phase_frame.empty else phase_frame
     if not verified_phase.empty:
         phase_target = st.sidebar.selectbox("Select user", verified_phase["name"].tolist())
-        if st.sidebar.button("View Dashboard 👁️", use_container_width=True):
+        if st.sidebar.button("Open Dashboard", use_container_width=True):
             row = verified_phase[verified_phase["name"] == phase_target].iloc[0]
             st.session_state.current_user = {
                 "role": "job_seeker" if phase_type == "Job Seeker" else "employer",
@@ -464,11 +464,11 @@ elif st.session_state.current_user["role"] == "admin":
             }
             _refresh()
 
-    if admin_view == "🏢 Employer & Job Seeker Management":
-        st.title("Employer & Job Seeker Management")
+    if admin_view == "Employer and Job Seeker Management":
+        st.title("Employer and Job Seeker Management")
         employer_col, seeker_col = st.columns(2)
         with employer_col:
-            st.subheader("➕ Add Employer / Business")
+            st.subheader("Register Employer or Business")
             with st.form("add_employer_form"):
                 name = st.text_input("Business name")
                 username = st.text_input("Employer username")
@@ -479,7 +479,7 @@ elif st.session_state.current_user["role"] == "admin":
                 verification = st.selectbox("Verification", ["Pending", "Verified"])
                 accreditation = st.selectbox("Accreditation", ["Pending", "Accredited"])
                 accreditation_id = st.text_input("Accreditation ID")
-                if st.form_submit_button("Add Employer"):
+                if st.form_submit_button("Register Employer"):
                     usernames = set(job_seekers_df["username"]) | set(employers_df["username"])
                     if not all([name, username, password, phone]):
                         st.error("Name, username, password and phone are required.")
@@ -497,7 +497,7 @@ elif st.session_state.current_user["role"] == "admin":
                             "accreditation_id": accreditation_id, "active": "Yes",
                         }])], ignore_index=True)
                         save_employers(employers_df)
-                        st.success("Employer added.")
+                        st.success("Employer account created successfully.")
                         _refresh()
             st.dataframe(
                 employers_df.drop(columns=["password"], errors="ignore"),
@@ -539,7 +539,7 @@ elif st.session_state.current_user["role"] == "admin":
                         save_employers(employers_df)
                         _refresh()
         with seeker_col:
-            st.subheader("➕ Add Job Seeker")
+            st.subheader("Register Job Seeker")
             with st.form("add_seeker_form"):
                 name = st.text_input("Full name")
                 username = st.text_input("Job seeker username")
@@ -549,7 +549,7 @@ elif st.session_state.current_user["role"] == "admin":
                 verification = st.selectbox("Verification status", ["Pending", "Verified"])
                 accreditation = st.selectbox("Accreditation status", ["Pending", "Accredited"])
                 accreditation_id = st.text_input("Job seeker accreditation ID")
-                if st.form_submit_button("Add Job Seeker"):
+                if st.form_submit_button("Register Job Seeker"):
                     usernames = set(job_seekers_df["username"]) | set(employers_df["username"])
                     if not all([name, username, password, phone]):
                         st.error("Name, username, password and phone are required.")
@@ -566,7 +566,7 @@ elif st.session_state.current_user["role"] == "admin":
                             "accreditation_id": accreditation_id, "active": "Yes",
                         }])], ignore_index=True)
                         save_job_seekers(job_seekers_df)
-                        st.success("Job seeker added.")
+                        st.success("Job seeker account created successfully.")
                         _refresh()
             st.dataframe(
                 job_seekers_df.drop(columns=["password"], errors="ignore"),
@@ -649,19 +649,19 @@ elif st.session_state.current_user["role"] == "employer":
     inject_custom_bg("employer")
     current = st.session_state.current_user
     employer_id = str(current["id"])
-    st.sidebar.title("🏢 Employer Dashboard")
-    st.sidebar.write(f"Welcome, **{current['name']}**.")
+    st.sidebar.title("Employer Dashboard")
+    st.sidebar.write(f"Signed in as **{current['name']}**.")
     if current.get("is_phased"):
-        st.sidebar.warning("👁️ ADMIN VIEW MODE")
-        if st.sidebar.button("Return to Admin Dashboard ⚡", type="primary"):
+        st.sidebar.warning("Administrator Preview Mode")
+        if st.sidebar.button("Return to Administration Dashboard", type="primary"):
             st.session_state.current_user = {"role": "admin", "name": "Administrator"}
             _refresh()
-    elif st.sidebar.button("Log Out 🚪", type="primary"):
+    elif st.sidebar.button("Sign Out", type="primary"):
         _logout()
-    st.sidebar.link_button("💬 Contact Administrator", f"https://wa.me/{SUPPORT_NUMBER}", use_container_width=True)
+    st.sidebar.link_button("Contact Administrator", f"https://wa.me/{SUPPORT_NUMBER}", use_container_width=True)
 
-    st.title("Post and manage vacancies")
-    with st.expander("➕ Publish a New Vacancy", expanded=True):
+    st.title("Vacancy Administration")
+    with st.expander("Publish a New Vacancy", expanded=True):
         with st.form("employer_post_vacancy_form"):
             title = st.text_input("Vacancy title")
             description = st.text_area("Role description")
@@ -672,7 +672,7 @@ elif st.session_state.current_user["role"] == "employer":
             location = st.text_input("Location / work arrangement")
             salary = st.text_input("Salary / compensation")
             deadline = st.date_input("Application deadline")
-            if st.form_submit_button("Publish Vacancy 🚀", type="primary"):
+            if st.form_submit_button("Publish Vacancy", type="primary"):
                 if not title.strip() or not description.strip():
                     st.error("A title and role description are required.")
                 else:
@@ -688,14 +688,14 @@ elif st.session_state.current_user["role"] == "employer":
 
     my_vacancies = vacancies_df[vacancies_df["employer_id"].astype(str) == employer_id]
     if my_vacancies.empty:
-        st.info("You have not published any vacancies.")
+        st.info("No vacancies have been published for this employer account.")
     for _, vacancy in my_vacancies.iterrows():
         with st.container(border=True):
             st.markdown(f"### {vacancy['title']} · {vacancy['status']}")
             st.write(vacancy.get("description", ""))
             st.caption(
                 f"{vacancy.get('employment_type', '')} · {vacancy.get('location', '')} · "
-                f"Salary/compensation: {vacancy.get('salary', 'Not specified')} · "
+                f"Compensation: {vacancy.get('salary', 'Not specified')} · "
                 f"Deadline: {vacancy.get('application_deadline', 'Not specified')}"
             )
             applications = _application_statuses(vacancy)
@@ -748,16 +748,16 @@ elif st.session_state.current_user["role"] == "job_seeker":
     inject_custom_bg("job_seeker")
     current = st.session_state.current_user
     seeker_id = str(current["id"])
-    st.sidebar.title("👤 Job Seeker Dashboard")
-    st.sidebar.write(f"Welcome, **{current['name']}**.")
+    st.sidebar.title("Job Seeker Dashboard")
+    st.sidebar.write(f"Signed in as **{current['name']}**.")
     if current.get("is_phased"):
-        st.sidebar.warning("👁️ ADMIN VIEW MODE")
-        if st.sidebar.button("Return to Admin Dashboard ⚡", type="primary"):
+        st.sidebar.warning("Administrator Preview Mode")
+        if st.sidebar.button("Return to Administration Dashboard", type="primary"):
             st.session_state.current_user = {"role": "admin", "name": "Administrator"}
             _refresh()
-    elif st.sidebar.button("Log Out 🚪", type="primary"):
+    elif st.sidebar.button("Sign Out", type="primary"):
         _logout()
-    st.sidebar.link_button("💬 Contact Administrator", f"https://wa.me/{SUPPORT_NUMBER}", use_container_width=True)
+    st.sidebar.link_button("Contact Administrator", f"https://wa.me/{SUPPORT_NUMBER}", use_container_width=True)
 
     st.title("Browse employment opportunities")
     available = vacancies_df[vacancies_df["status"].isin(["Open", "Applications"])]
@@ -769,7 +769,7 @@ elif st.session_state.current_user["role"] == "job_seeker":
             st.caption(
                 f"Employer: {get_employer_name(vacancy['employer_id'])} · "
                 f"{vacancy.get('employment_type', '')} · {vacancy.get('location', '')} · "
-                f"Salary/compensation: {vacancy.get('salary', 'Not specified')} · "
+                f"Compensation: {vacancy.get('salary', 'Not specified')} · "
                 f"Apply by: {vacancy.get('application_deadline', 'Not specified')}"
             )
             applications = _application_statuses(vacancy)
@@ -785,7 +785,7 @@ elif st.session_state.current_user["role"] == "job_seeker":
                         _refresh()
             elif deadline_passed:
                 st.warning("The application deadline has passed.")
-            elif st.button("Apply for this vacancy ✅", key=f"apply_{vacancy['id']}"):
+            elif st.button("Submit Application", key=f"apply_{vacancy['id']}"):
                 applications.append({
                     "job_seeker_id": seeker_id, "name": current["name"],
                     "applied_at": datetime.now(KISUMU_TZ).isoformat(), "status": "Applied",

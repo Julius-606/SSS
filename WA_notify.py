@@ -206,18 +206,18 @@ def job_scan():
                 if _verified(seeker):
                     sent_any = send_whatsapp_msg(
                         seeker.get("phone", ""),
-                        f"📢 *New Employment Vacancy*\nHello {seeker.get('name', 'Job seeker')}, "
+                        f"*New Employment Vacancy*\nDear {seeker.get('name', 'Job seeker')}, "
                         f"*{title}* is available from {employer_name}.\n"
                         f"Employment: {_value(row, 'employment_type', 'Not specified')} | "
                         f"Location: {_value(row, 'location', 'Not specified')}\n"
-                        f"Salary/compensation: {_value(row, 'salary', 'Not specified')}\n"
+                        f"Compensation: {_value(row, 'salary', 'Not specified')}\n"
                         f"Apply by: {_value(row, 'application_deadline', 'Not specified')}.\n"
                         f"Apply in the portal: {PORTAL_URL}",
                     ) or sent_any
             if employer_phone:
                 sent_any = send_whatsapp_msg(
                     employer_phone,
-                    f"📌 *Vacancy Published*\nYour vacancy *{title}* is now visible "
+                    f"*Vacancy Published*\nYour vacancy *{title}* is now visible "
                     f"to verified and accredited job seekers.\n{PORTAL_URL}",
                 ) or sent_any
             if sent_any or job_seekers.empty:
@@ -233,7 +233,7 @@ def job_scan():
             names = ", ".join(str(app.get("name", "Job seeker")) for app in pending)
             if send_whatsapp_msg(
                 employer_phone,
-                f"📝 *New Vacancy Application*\n{names} applied for *{title}*.\n"
+                f"*New Vacancy Application*\n{names} submitted an application for *{title}*.\n"
                 f"Review applications in the portal: {PORTAL_URL}",
             ):
                 jobs.at[index, "msg_application"] = "Yes"
@@ -249,7 +249,7 @@ def job_scan():
                 if _verified(seeker):
                     sent = send_whatsapp_msg(
                         seeker.get("phone", ""),
-                        f"⭐ *Application Shortlisted*\nYour application for *{title}* "
+                        f"*Application Shortlisted*\nYour application for *{title}* "
                         f"with {employer_name} was shortlisted.\n{PORTAL_URL}",
                     ) or sent
             if sent:
@@ -266,13 +266,13 @@ def job_scan():
                 if _verified(seeker):
                     sent = send_whatsapp_msg(
                         seeker.get("phone", ""),
-                        f"🎉 *You Have Been Hired*\n{employer_name} hired you for *{title}*.\n"
+                        f"*Employment Confirmed*\n{employer_name} has selected you for *{title}*.\n"
                         f"Please review the employment details: {PORTAL_URL}",
                     ) or sent
             if employer_phone:
                 sent = send_whatsapp_msg(
                     employer_phone,
-                    f"✅ *Job Seeker Hired*\nThe hiring decision for *{title}* is recorded.\n"
+                    f"*Hiring Decision Recorded*\nThe hiring decision for *{title}* has been recorded.\n"
                     f"Manage the vacancy: {PORTAL_URL}",
                 ) or sent
             if sent:
@@ -289,7 +289,7 @@ def job_scan():
                 if _verified(seeker):
                     sent = send_whatsapp_msg(
                         seeker.get("phone", ""),
-                        f"ℹ️ *Application Update*\nYour application for *{title}* "
+                        f"*Application Update*\nYour application for *{title}* "
                         f"was not selected. Please browse other verified opportunities: {PORTAL_URL}",
                     ) or sent
             if sent:
@@ -299,7 +299,7 @@ def job_scan():
         if status == "Closed" and not _value(row, "msg_closed"):
             sent = send_whatsapp_msg(
                 employer_phone,
-                f"🔒 *Vacancy Closed*\n*{title}* is now closed in the employment portal.",
+                f"*Vacancy Closed*\n*{title}* is now closed in the employment portal.",
             ) if employer_phone else False
             for app in applications:
                 if app.get("status") in {"Applied", "Pending", "Shortlisted"}:
@@ -307,7 +307,7 @@ def job_scan():
                     if _verified(seeker):
                         sent = send_whatsapp_msg(
                             seeker.get("phone", ""),
-                            f"🔒 *Vacancy Closed*\nApplications for *{title}* are now closed.",
+                            f"*Vacancy Closed*\nApplications for *{title}* are now closed.",
                         ) or sent
             if sent or (employer is None and not applications):
                 jobs.at[index, "msg_closed"] = "Yes"

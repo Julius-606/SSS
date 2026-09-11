@@ -1,28 +1,27 @@
-# SSS Portal OS
+# SSS Employment Portal
 
-Welcome to the SSS Portal OS, a Streamlit-based web application designed for Swift-hands Student Services. This portal helps manage employees, tasks, and finances, with an integrated WhatsApp notification system.
+The SSS Employment Portal is a Streamlit-based business application for Swift-hands Student Services. It supports verified employers, accredited job seekers, vacancy administration, application management, financial planning, and WhatsApp notifications.
 
 ## Features
 
-*   **User Authentication**: Secure login for administrators and employees.
-*   **Admin Dashboard**:
-    *   Assign and manage tasks.
-    *   Monitor active field operations.
-    *   View a master task ledger.
-    *   Finance & Analytics: Tender quotation engine, corporate income logging, and payroll generation.
-    *   Add new employees.
-    *   "View As Employee" phasing logic.
-*   **Employee Dashboard**:
-    *   View assigned tasks.
-    *   Confirm, start, complete, or decline tasks.
-    *   Track total earnings and pending balances.
-*   **Automated Task Archiving**: Monthly archival of old tasks to dedicated sheets.
+*   **Role-Based Access**: Controlled access for administrators, employers, and job seekers.
+*   **Administration Dashboard**:
+    *   Register and manage employer and job seeker accounts.
+    *   Review verification and accreditation status.
+    *   Publish and manage employment vacancies.
+    *   Preview verified user dashboards for support and oversight.
+*   **Employer Dashboard**:
+    *   Publish vacancies with role, qualification, compensation, and deadline details.
+    *   Review applications and manage shortlisting, hiring, and vacancy closure.
+*   **Job Seeker Dashboard**:
+    *   Browse verified employment opportunities.
+    *   Submit and withdraw applications.
+    *   Monitor application status.
+*   **Financial Planning**: Corporate financial modelling for compensation, billing, payroll, and retained earnings.
 *   **WhatsApp Notification Service**:
-    *   Sends alerts for new task assignments.
-    *   Sends reminders (night before, 1 hour before due time).
-    *   Sends late alerts for overdue tasks.
-    *   Notifies admin about cancelled tasks with reasons.
-    *   Integrated with Meta's Official Cloud API for WhatsApp.
+    *   Announces new vacancies and applications.
+    *   Notifies users of shortlisting, hiring, rejection, and vacancy closure.
+    *   Integrated with Meta's official WhatsApp Cloud API.
 
 ## Setup
 
@@ -49,7 +48,7 @@ pip install -r requirements.txt
 
 This application uses Google Sheets as its primary database.
 
-1.  **Create a Google Sheet**: Create a new Google Sheet in your Google Drive. This sheet will be used to store employee, task, settings, and accounting data. The default URL is:
+1.  **Create a Google Sheet**: Create a new Google Sheet in your Google Drive. This sheet stores employer, job seeker, vacancy, settings, and accounting data. The default URL is:
     `https://docs.google.com/spreadsheets/d/1lwK7P0Ul32suA1tOJMwrvPwawkMcVXIz5zNECVeUtfQ/edit?usp=sharing`
     You can update the `SHEET_URL` variable in `app.py` and `WA_notify.py` if you use a different sheet.
 
@@ -121,7 +120,7 @@ To start the WhatsApp notification background service:
 python WA_notify.py
 ```
 
-This script will continuously scan for tasks and send notifications. If deployed in a cloud environment (e.g., GitHub Actions), it will run as a scheduled scan.
+This script continuously scans the employment database and sends relevant notifications. If deployed in a cloud environment such as GitHub Actions, it runs as a scheduled scan.
 
 ## Admin Credentials
 
